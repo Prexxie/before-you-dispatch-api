@@ -7,14 +7,15 @@ Errors always come back as JSON with an `error` string, and `fields` when specif
 ## Order statuses
 
 ```
-pending_confirmation ─┬─> confirmed ──(pin saved, vendor sends rider link)──> dispatched ──(rider picks up)──> dispatched + pickedUpAt ─┬─(customer: "I've received it")─> + receivedAt ──(rider completes)──> delivered
-                      └─> not_ready ──(same day only)──> confirmed                                                                      ├─(vendor override)──────────────────────────────────────────> delivered
-                                                                                                                                          └─(rider, before receipt)─> failed (+ failureReason)
+pending_confirmation ─┬─> confirmed ──(pin saved, vendor sends rider link)──> dispatched ──(rider picks up)──> dispatched + pickedUpAt ──(rider: "I've arrived")──> + arrivedAt ─┬─(customer: "I've received it")─> + receivedAt ──(rider completes)──> delivered
+                      └─> not_ready ──(same day only)──> confirmed                                                                                                             ├─(vendor override)──────────────────────────────────────────> delivered
+                                                                                                                                                                                 └─(rider, before receipt)─> failed (+ failureReason)
 ```
 
 - An order is only dispatched once it's `confirmed` **and** has a saved pin (the confirm-before-dispatch rule).
-- Every transition has its own timestamp, so the full timeline can be shown without guessing from `status` alone: `confirmedAt`, `notReadyAt`, `locationSavedAt`, `dispatchedAt`, `pickedUpAt`, `receivedAt`, `completedAt`.
+- Every transition has its own timestamp, so the full timeline can be shown without guessing from `status` alone: `confirmedAt`, `notReadyAt`, `locationSavedAt`, `dispatchedAt`, `pickedUpAt`, `arrivedAt`, `receivedAt`, `completedAt`.
 - Picking up is a rider-only step, separate from dispatch: the rider's pin and landmark note (`GET /rider/:riderToken`) are withheld until `pickedUpAt` is set, not just hidden in the UI. It's informational for sequencing, not a hard gate on the outcome endpoint — a rider who forgets to tap "picked up" can still mark the delivery completed or failed.
+- "I've arrived" (`arrivedAt`) is the same kind of step: purely informational, requires pickup first, doesn't gate or unlock anything else, and tapping it again is harmless.
 - Completing a delivery needs the customer's receipt first (`receivedAt`). If the customer can't confirm, the vendor can mark it delivered (`deliveryConfirmedBy: "vendor"`). The rider can only mark it failed *before* the customer confirms receipt.
 - "Today" is the calendar day in Nigeria (WAT, UTC+1).
 - Failure reasons (preset only): `customer_not_ready`, `address_not_found`, `customer_unreachable`, `other`.
@@ -258,6 +259,7 @@ All four fields are required, non-empty strings (surrounding whitespace is trimm
       "status": "confirmed",
       "hasLocation": true,
       "pickedUpAt": null,
+      "arrivedAt": null,
       "receivedAt": null,
       "failureReason": null,
       "deliveryConfirmedBy": null,
@@ -398,6 +400,7 @@ Public, with no auth. Everything the rider needs in one place (MVP feature 4). O
     "vendorName": null,
     "vendor": { "name": "Precious Food Business", "address": "12 Allen Avenue, Ikeja", "phone": "0803 214 7765" },
     "pickedUpAt": null,
+    "arrivedAt": null,
     "receivedAt": null,
     "deliveryConfirmedBy": null
   }
@@ -412,6 +415,17 @@ Public, with no auth. The rider confirms they've collected the order from the ve
 - `200` → `{ "pickedUpAt": "2026-09-29T13:15:00.000Z", "location": { "lat": 6.6018, "lng": 3.3515, "landmarkNote": "..." } }`
 - `404` → `{ "error": "Delivery not found" }`
 - `409` → `{ "error": "...", "status": "<current status>" }`:
+  - `confirmed` → `"This delivery hasn't been dispatched yet."`
+  - `delivered` / `failed` → `"This delivery is already finished."`
+
+## `POST /rider/:riderToken/arrived`
+
+Public, with no auth. The rider confirms they've reached the customer's location, once they've confirmed pickup. Purely a status update — doesn't unlock or gate anything else (completing the delivery still needs the customer's receipt). No body. Tapping again is harmless.
+
+- `200` → `{ "arrivedAt": "2026-09-29T13:22:00.000Z" }`
+- `404` → `{ "error": "Delivery not found" }`
+- `409` → `{ "error": "...", "status": "<current status>" }`:
+  - `dispatched`, before pickup → `"Confirm pickup before marking that you've arrived."`
   - `confirmed` → `"This delivery hasn't been dispatched yet."`
   - `delivered` / `failed` → `"This delivery is already finished."`
 
@@ -442,6 +456,11 @@ New fields in existing responses:
 `POST /rider/:riderToken/outcome` now also answers `409` with `"status": "dispatched"`:
 - `{ "outcome": "delivered" }` before the customer confirms receipt → `"Waiting for the customer to confirm they've received it."`
 - `{ "outcome": "failed", ... }` after the customer confirmed receipt → `"The customer confirmed they received it, so it can't be marked failed."`
+
+## Rider arrival (added 28 Sep 2026)
+
+New endpoint: `POST /rider/:riderToken/arrived` (above). New field `arrivedAt`, alongside `pickedUpAt`, in every response that already carried it:
+- `GET /orders/:customerToken/confirm`, `GET /rider/:riderToken`, `GET /orders/:id`, and each row of `GET /orders`.
 
 ## `POST /orders/:customerToken/received`
 

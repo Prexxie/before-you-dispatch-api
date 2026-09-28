@@ -87,7 +87,7 @@
                   "pm.test('201 with the created vendor, including ownerName and category', () => {",
                   "  pm.response.to.have.status(201);",
                   "  const body = pm.response.json();",
-                  "  pm.expect(body).to.have.all.keys('id', 'businessName', 'businessAddress', 'businessPhone', 'logoUrl', 'ownerName', 'category', 'email', 'hasPassword');",
+                  "  pm.expect(body).to.have.all.keys('id', 'businessName', 'businessAddress', 'businessPhone', 'logoUrl', 'ownerName', 'category', 'themeColor', 'email', 'hasPassword');",
                   "  pm.expect(body.ownerName).to.eql('Test Owner');",
                   "  pm.expect(body.category).to.eql('other');",
                   "  pm.expect(body.businessAddress).to.eql('1 Postman Street, Lagos');",
@@ -174,7 +174,7 @@
                   "pm.test('200 with the vendor (no passwordHash)', () => {",
                   "  pm.response.to.have.status(200);",
                   "  const body = pm.response.json();",
-                  "  pm.expect(body).to.have.all.keys('id', 'businessName', 'businessAddress', 'businessPhone', 'logoUrl', 'ownerName', 'category', 'email', 'hasPassword');",
+                  "  pm.expect(body).to.have.all.keys('id', 'businessName', 'businessAddress', 'businessPhone', 'logoUrl', 'ownerName', 'category', 'themeColor', 'email', 'hasPassword');",
                   "});"
                 ]
               }
@@ -1151,6 +1151,7 @@
                   "  pm.expect(body.customerName).to.eql('Amaka Obi');",
                   "  pm.expect(body.location).to.eql(null);",
                   "  pm.expect(body.pickedUpAt).to.eql(null);",
+                  "  pm.expect(body.arrivedAt).to.eql(null);",
                   "  pm.expect(body.orderNumber).to.be.a('number');",
                   "});"
                 ]
@@ -1160,6 +1161,28 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/rider/{{riderToken}}"
+          }
+        },
+        {
+          "name": "Rider marks arrived before pickup (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409, pickup not confirmed yet', () => {",
+                  "  pm.response.to.have.status(409);",
+                  "  pm.expect(pm.response.json().status).to.eql('dispatched');",
+                  "  pm.expect(pm.response.json().error).to.include('pickup');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/rider/{{riderToken}}/arrived"
           }
         },
         {
@@ -1215,6 +1238,69 @@
                   "  pm.response.to.have.status(200);",
                   "  const body = pm.response.json();",
                   "  pm.expect(body.location.landmarkNote).to.include('2nd floor');",
+                  "  pm.expect(body.pickedUpAt).to.be.a('string');",
+                  "  pm.expect(body.arrivedAt).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/rider/{{riderToken}}"
+          }
+        },
+        {
+          "name": "Rider marks arrived",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with arrivedAt', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().arrivedAt).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/rider/{{riderToken}}/arrived"
+          }
+        },
+        {
+          "name": "Rider marks arrived again (still 200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, harmless', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/rider/{{riderToken}}/arrived"
+          }
+        },
+        {
+          "name": "Rider's delivery details (after arrived)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with arrivedAt now included', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.arrivedAt).to.be.a('string');",
                   "  pm.expect(body.pickedUpAt).to.be.a('string');",
                   "});"
                 ]
@@ -1444,6 +1530,7 @@
                   "  const row = body.orders.find((o) => o.id === pm.collectionVariables.get('orderId'));",
                   "  pm.expect(row, 'this order is on page 1').to.exist;",
                   "  pm.expect(row.status).to.eql('delivered');",
+                  "  pm.expect(row.arrivedAt).to.be.a('string');",
                   "  pm.expect(body.orders[0].id, 'just-completed order sorts to the top').to.eql(row.id);",
                   "  pm.collectionVariables.set('dashboardTotalPages', body.totalPages);",
                   "});"
@@ -1537,6 +1624,7 @@
                   "  const body = pm.response.json();",
                   "  pm.expect(body.status).to.eql('delivered');",
                   "  pm.expect(body.pickedUpAt).to.be.a('string');",
+                  "  pm.expect(body.arrivedAt).to.be.a('string');",
                   "  pm.expect(body.completedAt).to.be.a('string');",
                   "  pm.expect(body.receivedAt).to.be.a('string');",
                   "  pm.expect(body.deliveryConfirmedBy).to.eql('customer');",
@@ -1753,7 +1841,7 @@
           ]
         },
         {
-          "name": "Add a rider — missing fields (400)",
+          "name": "Add a rider \u2014 missing fields (400)",
           "request": {
             "method": "POST",
             "header": [
@@ -1964,9 +2052,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('201, session set — the rest of this folder runs as this throwaway vendor, never the demo one', () => {",
+                  "pm.test('201, session set \u2014 the rest of this folder runs as this throwaway vendor, never the demo one', () => {",
                   "  pm.response.to.have.status(201);",
                   "  const body = pm.response.json();",
+                  "  pm.expect(body.themeColor).to.eql('green');",
                   "  pm.collectionVariables.set('settingsTestEmail', body.email);",
                   "});"
                 ]
@@ -1975,7 +2064,7 @@
           ]
         },
         {
-          "name": "PATCH /auth/me — update business name and address",
+          "name": "PATCH /auth/me \u2014 update business name and address",
           "request": {
             "method": "PATCH",
             "header": [
@@ -2009,7 +2098,71 @@
           ]
         },
         {
-          "name": "PATCH /auth/me — empty businessAddress (400)",
+          "name": "PATCH /auth/me \u2014 set themeColor",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/me",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"themeColor\": \"navy\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, themeColor updated, other fields untouched', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.themeColor).to.eql('navy');",
+                  "  pm.expect(body.businessName).to.eql('Settings Test Biz Renamed');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH /auth/me \u2014 invalid themeColor (400)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/me",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"themeColor\": \"gold\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 naming themeColor', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().fields).to.include('themeColor');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH /auth/me \u2014 empty businessAddress (400)",
           "request": {
             "method": "PATCH",
             "header": [
@@ -2040,7 +2193,7 @@
           ]
         },
         {
-          "name": "PATCH /auth/me — clear businessPhone with an empty string",
+          "name": "PATCH /auth/me \u2014 clear businessPhone with an empty string",
           "request": {
             "method": "PATCH",
             "header": [
@@ -2071,7 +2224,7 @@
           ]
         },
         {
-          "name": "PATCH /auth/me — no body (400, nothing to update)",
+          "name": "PATCH /auth/me \u2014 no body (400, nothing to update)",
           "request": {
             "method": "PATCH",
             "header": [
@@ -2099,7 +2252,7 @@
           ]
         },
         {
-          "name": "POST /auth/change-password — wrong current password (401)",
+          "name": "POST /auth/change-password \u2014 wrong current password (401)",
           "request": {
             "method": "POST",
             "header": [
@@ -2130,7 +2283,7 @@
           ]
         },
         {
-          "name": "POST /auth/change-password — new password too short (400)",
+          "name": "POST /auth/change-password \u2014 new password too short (400)",
           "request": {
             "method": "POST",
             "header": [
@@ -2161,7 +2314,7 @@
           ]
         },
         {
-          "name": "POST /auth/change-password — correct current password",
+          "name": "POST /auth/change-password \u2014 correct current password",
           "request": {
             "method": "POST",
             "header": [
@@ -2431,7 +2584,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('400 naming ticket — the email can never come from the request body', () => {",
+                  "pm.test('400 naming ticket \u2014 the email can never come from the request body', () => {",
                   "  pm.response.to.have.status(400);",
                   "  pm.expect(pm.response.json().fields).to.include('ticket');",
                   "});"

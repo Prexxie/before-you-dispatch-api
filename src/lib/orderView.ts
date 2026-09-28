@@ -36,6 +36,7 @@ export function vendorOrderView(order: Order & { rider: Rider; vendor: Vendor })
     locationSavedAt: order.locationSavedAt,
     dispatchedAt: order.dispatchedAt,
     pickedUpAt: order.pickedUpAt,
+    arrivedAt: order.arrivedAt,
     receivedAt: order.receivedAt,
     completedAt: order.completedAt,
     failureReason: order.failureReason,

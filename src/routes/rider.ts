@@ -44,6 +44,8 @@ router.get("/:token", async (req, res) => {
     // The pickup point.
     vendor: vendorDetails(order.vendor),
     pickedUpAt: order.pickedUpAt,
+    // Set once the rider taps "I've arrived" at the customer's location.
+    arrivedAt: order.arrivedAt,
     // Set once the customer taps "I've received my delivery"; the rider can
     // only complete the delivery after that.
     receivedAt: order.receivedAt,
@@ -93,6 +95,56 @@ router.post("/:token/pickup", async (req, res) => {
     pickedUpAt: current.pickedUpAt,
     location: orderLocation(current),
   });
+});
+
+const NOT_ARRIVABLE_MESSAGES: Partial<Record<OrderStatus, string>> = {
+  confirmed: "This delivery hasn't been dispatched yet.",
+  delivered: "This delivery is already finished.",
+  failed: "This delivery is already finished.",
+};
+
+// POST /rider/:token/arrived — the rider confirms they're at the customer's
+// location. Purely a status update: it doesn't unlock anything (completing
+// the delivery still needs the customer's receipt) and isn't required
+// before marking an outcome, same reasoning as pickup. Requires pickup
+// first — arriving before picking up the order doesn't make sense — though
+// in practice the rider's own screens only offer this after pickup already.
+// Tapping again is harmless.
+router.post("/:token/arrived", async (req, res) => {
+  const order = await findJob(req.params.token);
+  if (!order) {
+    res.status(404).json({ error: "Delivery not found" });
+    return;
+  }
+  if (order.pickedUpAt === null) {
+    res.status(409).json({
+      error: "Confirm pickup before marking that you've arrived.",
+      status: order.status,
+    });
+    return;
+  }
+
+  const arrivedAt = new Date();
+  await prisma.order.updateMany({
+    where: { id: order.id, status: "dispatched", arrivedAt: null },
+    data: { arrivedAt },
+  });
+
+  const current = await prisma.order.findUnique({ where: { id: order.id } });
+  if (!current) {
+    res.status(404).json({ error: "Delivery not found" });
+    return;
+  }
+  if (current.arrivedAt === null) {
+    res.status(409).json({
+      error:
+        NOT_ARRIVABLE_MESSAGES[current.status] ??
+        "This delivery can't be marked arrived right now.",
+      status: current.status,
+    });
+    return;
+  }
+  res.json({ arrivedAt: current.arrivedAt });
 });
 
 // POST /rider/:token/outcome — { outcome: "delivered" } or

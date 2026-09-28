@@ -73,6 +73,7 @@ router.get("/:token/confirm", async (req, res) => {
       order.status === "not_ready" && isTodayInLagos(order.createdAt),
     rider: rider ? { name: rider.name, phone: rider.phone } : null,
     pickedUpAt: order.pickedUpAt,
+    arrivedAt: order.arrivedAt,
     receivedAt: order.receivedAt,
   });
 });

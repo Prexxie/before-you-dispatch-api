@@ -54,6 +54,18 @@ enum VendorCategory {
   other              // "Other"
 }
 
+// A cosmetic accent color for the vendor's own dashboard (design: "Vendor:
+// Settings", Workspace theme). Purely a per-vendor preference — the "Before
+// You Dispatch" brand mark itself never changes, and neither do the
+// customer or rider pages, which this never reaches.
+enum ThemeColor {
+  green   // default; the brand's own green
+  crimson
+  navy
+  amber
+  purple
+}
+
 // A vendor account. Replaces the DEMO_VENDOR_* env settings: business
 // details now live per-account instead of one shared value for everyone.
 model Vendor {
@@ -70,6 +82,7 @@ model Vendor {
   // which are what customers and riders see.
   ownerName         String
   category          VendorCategory
+  themeColor        ThemeColor      @default(green)
   email             String          @unique
   // Null for an account created with Google and never given a password
   // (forgot-password lets one set one).
@@ -137,6 +150,7 @@ model Order {
   notReadyAt          DateTime? // when the customer tapped "Not now"
   dispatchedAt        DateTime? // when the vendor sent the rider link
   pickedUpAt          DateTime? // when the rider confirmed they collected the order
+  arrivedAt           DateTime? // when the rider tapped "I've arrived" at the customer's location
   receivedAt          DateTime? // when the customer tapped "I've received my delivery"
   completedAt         DateTime? // when the delivery was completed or marked failed
   failureReason       FailureReason?

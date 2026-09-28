@@ -12,13 +12,14 @@ import { sendEmail } from "../lib/email";
 import { RESET_TOKEN_TTL_MS, hashResetToken, newResetToken } from "../lib/resetToken";
 import { env } from "../config/env";
 import { readGoogleTicket, signGoogleTicket, verifyGoogleCredential } from "../lib/google";
-import { Vendor, VendorCategory } from "../generated/prisma/client";
+import { ThemeColor, Vendor, VendorCategory } from "../generated/prisma/client";
 
 const router = Router();
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD_LENGTH = 8;
 const VENDOR_CATEGORIES = Object.values(VendorCategory);
+const THEME_COLORS = Object.values(ThemeColor);
 
 function vendorView(vendor: Vendor) {
   return {
@@ -29,6 +30,10 @@ function vendorView(vendor: Vendor) {
     logoUrl: vendor.logoUrl,
     ownerName: vendor.ownerName,
     category: vendor.category,
+    // A per-vendor dashboard accent (design: "Vendor: Settings", Workspace
+    // theme). Never sent to customers or riders — vendorDetails() (in
+    // config/env.ts) is their separate, public subset and doesn't include it.
+    themeColor: vendor.themeColor,
     email: vendor.email,
     // false for an account made with Google that never set a password.
     hasPassword: vendor.passwordHash !== null,
@@ -254,9 +259,11 @@ router.get("/me", requireVendor, async (req, res) => {
   res.json(vendorView(vendor));
 });
 
-// PATCH /auth/me — the "Edit Profile" form (design: "Vendor: Settings").
-// Body: any of { businessName, businessAddress, businessPhone, logoDataUrl,
-// ownerName, category }, all optional — only the fields sent are changed.
+// PATCH /auth/me — the "Edit Profile" form, plus the "Workspace theme"
+// swatch picker, which just sends { themeColor } on its own on each click
+// (design: "Vendor: Settings"). Body: any of { businessName, businessAddress,
+// businessPhone, logoDataUrl, ownerName, category, themeColor }, all
+// optional — only the fields sent are changed.
 // businessPhone and logoDataUrl clear to null when sent as an empty string;
 // email and password aren't editable here (password has its own route
 // below; email isn't editable in this build).
@@ -297,11 +304,15 @@ router.patch("/me", requireVendor, async (req, res) => {
     if (!VENDOR_CATEGORIES.includes(body.category)) fields.push("category");
     else data.category = body.category as VendorCategory;
   }
+  if ("themeColor" in body) {
+    if (!THEME_COLORS.includes(body.themeColor)) fields.push("themeColor");
+    else data.themeColor = body.themeColor as ThemeColor;
+  }
 
   if (fields.length > 0) {
     res.status(400).json({
       error:
-        "businessName, businessAddress and ownerName can't be empty; category must be valid; logoDataUrl, if sent, must be a small image (under 500 KB)",
+        "businessName, businessAddress and ownerName can't be empty; category and themeColor must be valid; logoDataUrl, if sent, must be a small image (under 500 KB)",
       fields,
     });
     return;

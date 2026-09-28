@@ -176,6 +176,7 @@ router.get("/", requireVendor, async (req, res) => {
       status: o.status,
       hasLocation: o.lat != null,
       pickedUpAt: o.pickedUpAt,
+      arrivedAt: o.arrivedAt,
       receivedAt: o.receivedAt,
       failureReason: o.failureReason,
       deliveryConfirmedBy: o.deliveryConfirmedBy,
