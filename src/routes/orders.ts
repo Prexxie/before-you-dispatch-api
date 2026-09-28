@@ -54,7 +54,7 @@ router.post("/", requireVendor, async (req, res) => {
   }
 
   const rider = await prisma.rider.findUnique({ where: { id: riderId } });
-  if (!rider || rider.vendorId !== req.vendorId) {
+  if (!rider || rider.vendorId !== req.vendorId || !rider.active) {
     res.status(400).json({
       error: "riderId does not match any rider",
       fields: ["riderId"],

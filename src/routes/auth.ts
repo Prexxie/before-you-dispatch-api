@@ -7,12 +7,14 @@ import {
   clearSessionCookie,
 } from "../lib/auth";
 import { requireVendor } from "../middleware/requireVendor";
-import { Vendor } from "../generated/prisma/client";
+import { parseLogoDataUrl } from "../lib/logo";
+import { Vendor, VendorCategory } from "../generated/prisma/client";
 
 const router = Router();
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD_LENGTH = 8;
+const VENDOR_CATEGORIES = Object.values(VendorCategory);
 
 function vendorView(vendor: Vendor) {
   return {
@@ -20,36 +22,49 @@ function vendorView(vendor: Vendor) {
     businessName: vendor.businessName,
     businessAddress: vendor.businessAddress,
     businessPhone: vendor.businessPhone,
+    logoUrl: vendor.logoUrl,
+    ownerName: vendor.ownerName,
+    category: vendor.category,
     email: vendor.email,
   };
 }
 
-// POST /auth/signup — body { businessName, businessAddress?, businessPhone?,
-// email, password }. Address and phone are optional (a vendor can add them
-// later); they're what customers and riders see as "delivered from".
+// POST /auth/signup — body { businessName, businessAddress, businessPhone?,
+// logoDataUrl?, ownerName, category, email, password }. businessAddress is
+// the rider's pickup point, required; businessPhone is optional (a vendor
+// can add it later). Both are what customers and riders see as "delivered
+// from". logoDataUrl is an optional small "data:image/..." string, shown
+// only on the vendor's own dashboard for now. ownerName and category are
+// account context, never shown to customers or riders.
 router.post("/signup", async (req, res) => {
   const body = req.body ?? {};
   const businessName =
     typeof body.businessName === "string" ? body.businessName.trim() : "";
   const businessAddress =
-    typeof body.businessAddress === "string" && body.businessAddress.trim()
-      ? body.businessAddress.trim()
-      : null;
+    typeof body.businessAddress === "string" ? body.businessAddress.trim() : "";
   const businessPhone =
     typeof body.businessPhone === "string" && body.businessPhone.trim()
       ? body.businessPhone.trim()
       : null;
+  const logoUrl = parseLogoDataUrl(body.logoDataUrl);
+  const ownerName =
+    typeof body.ownerName === "string" ? body.ownerName.trim() : "";
+  const category = body.category;
   const email =
     typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
   const password = typeof body.password === "string" ? body.password : "";
 
   const fields: string[] = [];
   if (!businessName) fields.push("businessName");
+  if (!businessAddress) fields.push("businessAddress");
+  if (!ownerName) fields.push("ownerName");
+  if (!VENDOR_CATEGORIES.includes(category)) fields.push("category");
   if (!EMAIL_PATTERN.test(email)) fields.push("email");
   if (password.length < MIN_PASSWORD_LENGTH) fields.push("password");
+  if (logoUrl === "invalid") fields.push("logoDataUrl");
   if (fields.length > 0) {
     res.status(400).json({
-      error: `businessName and a valid email are required; password must be at least ${MIN_PASSWORD_LENGTH} characters`,
+      error: `businessName, businessAddress, ownerName, a valid category and email are required; password must be at least ${MIN_PASSWORD_LENGTH} characters; logoDataUrl, if sent, must be a small image (under 500 KB)`,
       fields,
     });
     return;
@@ -66,7 +81,16 @@ router.post("/signup", async (req, res) => {
 
   const passwordHash = await hashPassword(password);
   const vendor = await prisma.vendor.create({
-    data: { businessName, businessAddress, businessPhone, email, passwordHash },
+    data: {
+      businessName,
+      businessAddress,
+      businessPhone,
+      logoUrl,
+      ownerName,
+      category: category as VendorCategory,
+      email,
+      passwordHash,
+    },
   });
 
   setSessionCookie(res, vendor.id);
@@ -110,6 +134,97 @@ router.get("/me", requireVendor, async (req, res) => {
     return;
   }
   res.json(vendorView(vendor));
+});
+
+// PATCH /auth/me — the "Edit Profile" form (design: "Vendor: Settings").
+// Body: any of { businessName, businessAddress, businessPhone, logoDataUrl,
+// ownerName, category }, all optional — only the fields sent are changed.
+// businessPhone and logoDataUrl clear to null when sent as an empty string;
+// email and password aren't editable here (password has its own route
+// below; email isn't editable in this build).
+router.patch("/me", requireVendor, async (req, res) => {
+  const body = req.body ?? {};
+  const data: Record<string, unknown> = {};
+  const fields: string[] = [];
+
+  if ("businessName" in body) {
+    const businessName =
+      typeof body.businessName === "string" ? body.businessName.trim() : "";
+    if (!businessName) fields.push("businessName");
+    else data.businessName = businessName;
+  }
+  if ("businessAddress" in body) {
+    const businessAddress =
+      typeof body.businessAddress === "string" ? body.businessAddress.trim() : "";
+    if (!businessAddress) fields.push("businessAddress");
+    else data.businessAddress = businessAddress;
+  }
+  if ("businessPhone" in body) {
+    data.businessPhone =
+      typeof body.businessPhone === "string" && body.businessPhone.trim()
+        ? body.businessPhone.trim()
+        : null;
+  }
+  if ("logoDataUrl" in body) {
+    const logoUrl = parseLogoDataUrl(body.logoDataUrl);
+    if (logoUrl === "invalid") fields.push("logoDataUrl");
+    else data.logoUrl = logoUrl;
+  }
+  if ("ownerName" in body) {
+    const ownerName = typeof body.ownerName === "string" ? body.ownerName.trim() : "";
+    if (!ownerName) fields.push("ownerName");
+    else data.ownerName = ownerName;
+  }
+  if ("category" in body) {
+    if (!VENDOR_CATEGORIES.includes(body.category)) fields.push("category");
+    else data.category = body.category as VendorCategory;
+  }
+
+  if (fields.length > 0) {
+    res.status(400).json({
+      error:
+        "businessName, businessAddress and ownerName can't be empty; category must be valid; logoDataUrl, if sent, must be a small image (under 500 KB)",
+      fields,
+    });
+    return;
+  }
+  if (Object.keys(data).length === 0) {
+    res.status(400).json({ error: "Nothing to update", fields: [] });
+    return;
+  }
+
+  const vendor = await prisma.vendor.update({ where: { id: req.vendorId }, data });
+  res.json(vendorView(vendor));
+});
+
+// POST /auth/change-password — body { currentPassword, newPassword }.
+router.post("/change-password", requireVendor, async (req, res) => {
+  const body = req.body ?? {};
+  const currentPassword =
+    typeof body.currentPassword === "string" ? body.currentPassword : "";
+  const newPassword = typeof body.newPassword === "string" ? body.newPassword : "";
+
+  if (newPassword.length < MIN_PASSWORD_LENGTH) {
+    res.status(400).json({
+      error: `newPassword must be at least ${MIN_PASSWORD_LENGTH} characters`,
+      fields: ["newPassword"],
+    });
+    return;
+  }
+
+  const vendor = await prisma.vendor.findUnique({ where: { id: req.vendorId } });
+  const valid = vendor && (await verifyPassword(currentPassword, vendor.passwordHash));
+  if (!vendor || !valid) {
+    res.status(401).json({
+      error: "Current password is incorrect",
+      fields: ["currentPassword"],
+    });
+    return;
+  }
+
+  const passwordHash = await hashPassword(newPassword);
+  await prisma.vendor.update({ where: { id: vendor.id }, data: { passwordHash } });
+  res.json({ message: "Password changed" });
 });
 
 export default router;

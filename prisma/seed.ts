@@ -9,6 +9,8 @@ const DEMO_VENDOR = {
   businessName: "Precious Food Business",
   businessAddress: "12 Allen Avenue, Ikeja",
   businessPhone: "0803 214 7765",
+  ownerName: "Precious Adebayo",
+  category: "food_restaurant" as const,
   email: "demo@beforeyoudispatch.test",
   password: "ChangeMe123!",
 };
@@ -22,12 +24,14 @@ const RIDERS = [
 async function main() {
   const vendor = await prisma.vendor.upsert({
     where: { id: DEMO_VENDOR.id },
-    update: {},
+    update: { ownerName: DEMO_VENDOR.ownerName, category: DEMO_VENDOR.category },
     create: {
       id: DEMO_VENDOR.id,
       businessName: DEMO_VENDOR.businessName,
       businessAddress: DEMO_VENDOR.businessAddress,
       businessPhone: DEMO_VENDOR.businessPhone,
+      ownerName: DEMO_VENDOR.ownerName,
+      category: DEMO_VENDOR.category,
       email: DEMO_VENDOR.email,
       passwordHash: await hashPassword(DEMO_VENDOR.password),
     },

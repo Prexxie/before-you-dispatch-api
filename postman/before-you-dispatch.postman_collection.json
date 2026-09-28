@@ -28,6 +28,14 @@
     {
       "key": "notReadyToken",
       "value": ""
+    },
+    {
+      "key": "newRiderId",
+      "value": ""
+    },
+    {
+      "key": "settingsTestEmail",
+      "value": ""
     }
   ],
   "item": [
@@ -48,6 +56,72 @@
                 "exec": [
                   "pm.test('401 without a session', () => {",
                   "  pm.response.to.have.status(401);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign up a new vendor (ownerName + category + address required)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/signup",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"businessName\": \"Postman Test Biz\",\n  \"businessAddress\": \"1 Postman Street, Lagos\",\n  \"ownerName\": \"Test Owner\",\n  \"category\": \"other\",\n  \"email\": \"postman-signup-{{$timestamp}}@example.com\",\n  \"password\": \"Password123\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 with the created vendor, including ownerName and category', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.have.all.keys('id', 'businessName', 'businessAddress', 'businessPhone', 'logoUrl', 'ownerName', 'category', 'email');",
+                  "  pm.expect(body.ownerName).to.eql('Test Owner');",
+                  "  pm.expect(body.category).to.eql('other');",
+                  "  pm.expect(body.businessAddress).to.eql('1 Postman Street, Lagos');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sign up missing ownerName/category/businessAddress (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/signup",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"businessName\": \"Incomplete Biz\",\n  \"email\": \"incomplete-{{$timestamp}}@example.com\",\n  \"password\": \"Password123\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 naming ownerName, category and businessAddress', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().fields).to.include.members(['ownerName', 'category', 'businessAddress']);",
                   "});"
                 ]
               }
@@ -100,7 +174,7 @@
                   "pm.test('200 with the vendor (no passwordHash)', () => {",
                   "  pm.response.to.have.status(200);",
                   "  const body = pm.response.json();",
-                  "  pm.expect(body).to.have.all.keys('id', 'businessName', 'businessAddress', 'businessPhone', 'email');",
+                  "  pm.expect(body).to.have.all.keys('id', 'businessName', 'businessAddress', 'businessPhone', 'logoUrl', 'ownerName', 'category', 'email');",
                   "});"
                 ]
               }
@@ -146,7 +220,7 @@
               "  pm.response.to.have.status(200);",
               "  const riders = pm.response.json();",
               "  pm.expect(riders).to.be.an('array').that.is.not.empty;",
-              "  pm.expect(riders[0]).to.have.all.keys('id', 'name', 'phone', 'vehicle');",
+              "  pm.expect(riders[0]).to.have.all.keys('id', 'name', 'phone', 'vehicle', 'active');",
               "});",
               "pm.test('includes the seeded rider used by this collection', () => {",
               "  pm.expect(pm.response.json().map((r) => r.id)).to.include(pm.collectionVariables.get('riderId'));",
@@ -1639,6 +1713,511 @@
             "method": "POST",
             "url": "{{baseUrl}}/orders/{{overrideToken}}/received"
           }
+        }
+      ]
+    },
+    {
+      "name": "7. Riders (add, activate, deactivate)",
+      "item": [
+        {
+          "name": "Add a rider",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/riders",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman Rider\",\n  \"phone\": \"0803 555 9999\",\n  \"vehicle\": \"van\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201, active by default', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.active).to.eql(true);",
+                  "  pm.collectionVariables.set('newRiderId', body.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Add a rider — missing fields (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/riders",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 naming name, phone and vehicle', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().fields).to.include.members(['name', 'phone', 'vehicle']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /riders?active=true includes the new rider",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/riders?active=true"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, includes the new rider', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().map((r) => r.id)).to.include(pm.collectionVariables.get('newRiderId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Deactivate the new rider",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/riders/{{newRiderId}}/deactivate"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, active is now false', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().active).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /riders?active=true no longer includes it",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/riders?active=true"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, deactivated rider excluded', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().map((r) => r.id)).to.not.include(pm.collectionVariables.get('newRiderId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /riders (no filter) still includes it",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/riders"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, deactivated rider still listed unfiltered', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().map((r) => r.id)).to.include(pm.collectionVariables.get('newRiderId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Creating an order with a deactivated rider is refused (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/orders",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerName\": \"Test\",\n  \"customerPhone\": \"0803 111 2222\",\n  \"itemDescription\": \"Test\",\n  \"riderId\": \"{{newRiderId}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400, riderId not assignable while inactive', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().fields).to.include('riderId');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reactivate the rider",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/riders/{{newRiderId}}/activate"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, active again', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().active).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Deactivating an unknown rider id is a 404",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/riders/00000000-0000-4000-8000-000000000000/deactivate"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404', () => { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "8. Settings (profile + change password)",
+      "item": [
+        {
+          "name": "Sign up a throwaway vendor for these tests",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/signup",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"businessName\": \"Settings Test Biz\",\n  \"businessAddress\": \"1 Settings St, Lagos\",\n  \"ownerName\": \"Settings Tester\",\n  \"category\": \"other\",\n  \"email\": \"postman-settings-{{$timestamp}}@example.com\",\n  \"password\": \"Password123\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201, session set — the rest of this folder runs as this throwaway vendor, never the demo one', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('settingsTestEmail', body.email);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH /auth/me — update business name and address",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/me",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"businessName\": \"Settings Test Biz Renamed\",\n  \"businessAddress\": \"2 New Address, Lagos\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, only the sent fields change', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.businessName).to.eql('Settings Test Biz Renamed');",
+                  "  pm.expect(body.businessAddress).to.eql('2 New Address, Lagos');",
+                  "  pm.expect(body.ownerName).to.eql('Settings Tester');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH /auth/me — empty businessAddress (400)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/me",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"businessAddress\": \"\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400, businessAddress cannot be cleared', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().fields).to.include('businessAddress');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH /auth/me — clear businessPhone with an empty string",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/me",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"businessPhone\": \"\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, businessPhone is now null', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().businessPhone).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH /auth/me — no body (400, nothing to update)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/me",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400', () => { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /auth/change-password — wrong current password (401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/change-password",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"WrongPassword\",\n  \"newPassword\": \"NewPassword123\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401', () => {",
+                  "  pm.response.to.have.status(401);",
+                  "  pm.expect(pm.response.json().fields).to.include('currentPassword');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /auth/change-password — new password too short (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/change-password",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"Password123\",\n  \"newPassword\": \"short\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().fields).to.include('newPassword');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /auth/change-password — correct current password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/change-password",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"Password123\",\n  \"newPassword\": \"NewPassword123\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Log in with the new password confirms the change stuck",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{settingsTestEmail}}\",\n  \"password\": \"NewPassword123\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, the old password no longer works, the new one does', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().email).to.eql(pm.collectionVariables.get('settingsTestEmail'));",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     }

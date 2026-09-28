@@ -19,7 +19,7 @@ pending_confirmation ─┬─> confirmed ──(pin saved, vendor sends rider l
 - "Today" is the calendar day in Nigeria (WAT, UTC+1).
 - Failure reasons (preset only): `customer_not_ready`, `address_not_found`, `customer_unreachable`, `other`.
 - `deliveryConfirmedBy`: `customer` (they tapped "I've received my delivery") or `vendor` (override); `null` until then.
-- `vendor` (in several responses): `{ "name": "Precious Food Business", "address": "12 Allen Avenue, Ikeja", "phone": "0803 214 7765" }`, or `null` if the vendor hasn't set an address/phone (`name` is always set — it's required at sign up). Comes from the logged-in vendor's account.
+- `vendor` (in several responses): `{ "name": "Precious Food Business", "address": "12 Allen Avenue, Ikeja", "phone": "0803 214 7765", "logoUrl": null }`. `name` and `address` are always set (both required at sign up); `phone` and `logoUrl` are `null` if never added. Comes from the logged-in vendor's account.
 
 ---
 
@@ -46,14 +46,17 @@ The customer (`/orders/:customerToken/...`) and rider (`/rider/:riderToken/...`)
   "businessName": "Precious Food Business",
   "businessAddress": "12 Allen Avenue, Ikeja",
   "businessPhone": "0803 214 7765",
+  "logoDataUrl": "data:image/png;base64,...",
+  "ownerName": "Precious Adebayo",
+  "category": "food_restaurant",
   "email": "owner@precious-food.example",
   "password": "at least 8 characters"
 }
 ```
 
-`businessAddress` and `businessPhone` are optional (`null` if left out) — shown to customers and riders as "delivered from". `businessName`, a valid `email` and a `password` of at least 8 characters are required.
+`businessAddress` is required — it's the rider's pickup point, not just context. `businessPhone` and `logoDataUrl` are optional (`null` if left out). `businessName`, `businessAddress`, `ownerName`, a valid `category`, a valid `email` and a `password` of at least 8 characters are required. `logoDataUrl`, if sent, must be a `data:image/(png|jpeg|webp|gif);base64,...` string under 500 KB decoded, or it's a `400`. `ownerName` and `category` are account context only — never shown to customers or riders. `category` is one of: `retail_ecommerce` ("Retail / e-commerce"), `food_restaurant` ("Food or restaurant"), `pharmacy` ("Pharmacy"), `delivery_logistics` ("Delivery / logistics / dispatch company"), `other`.
 
-- `201`: the created vendor (never includes `passwordHash`): `{ "id", "businessName", "businessAddress", "businessPhone", "email" }`. Sets the session cookie.
+- `201`: the created vendor (never includes `passwordHash`): `{ "id", "businessName", "businessAddress", "businessPhone", "logoUrl", "ownerName", "category", "email" }`. Sets the session cookie.
 - `400` `{ "error": "...", "fields": [...] }`
 - `409` `{ "error": "An account with this email already exists", "fields": ["email"] }`
 
@@ -74,17 +77,73 @@ The logged-in vendor, or `401` if there isn't one. Used to restore a session on 
 
 `200`: the vendor (same shape as signup).
 
+### `PATCH /auth/me`
+
+The "Edit Profile" form (design: "Vendor: Settings"). Body: any of `businessName`, `businessAddress`, `businessPhone`, `logoDataUrl`, `ownerName`, `category` — only the fields sent are changed. `email` and `password` aren't editable here (password has its own route below; email isn't editable in this build).
+
+```json
+{ "businessName": "Precious Food Business", "businessAddress": "12 Allen Avenue, Ikeja" }
+```
+
+`businessPhone` and `logoDataUrl` clear to `null` when sent as an empty string. `businessName`, `businessAddress` and `ownerName` can't be cleared (`400` if sent empty); `category` must be one of the valid values if sent; `logoDataUrl` follows the same rules as at sign up.
+
+- `200`: the updated vendor (same shape as signup).
+- `400` `{ "error": "...", "fields": [...] }` — including `{ "error": "Nothing to update", "fields": [] }` for an empty body.
+
+### `POST /auth/change-password`
+
+**Body** `{ "currentPassword": "...", "newPassword": "at least 8 characters" }`
+
+- `200` `{ "message": "Password changed" }`
+- `400` `{ "error": "newPassword must be at least 8 characters", "fields": ["newPassword"] }`
+- `401` `{ "error": "Current password is incorrect", "fields": ["currentPassword"] }`
+
 ---
 
 ## `GET /riders`
 
-The logged-in vendor's riders, for the create-order rider dropdown, sorted by name.
+The logged-in vendor's riders, sorted by name.
 
-`200` → `[{ "id": "seed-rider-2", "name": "Chidi Okafor", "phone": "+2348120045521", "vehicle": "car" }, ...]`
+**Query parameters:** `active=true` narrows to riders who can still be assigned (what the create-order dropdown calls). With no filter, every rider is returned, including deactivated ones (the riders management page, which shows both).
+
+`200` → `[{ "id": "seed-rider-2", "name": "Chidi Okafor", "phone": "+2348120045521", "vehicle": "car", "active": true }, ...]`
 
 `vehicle` is `"bike"`, `"car"`, `"van"` or `null`.
 
-Adding riders isn't built yet (week 2) — a newly signed-up vendor has none to assign until then; use the seeded demo vendor (`demo@beforeyoudispatch.test` / `ChangeMe123!`, from `yarn db:seed`) to test order creation locally.
+A newly signed-up vendor has none to assign until they add one; use the seeded demo vendor (`demo@beforeyoudispatch.test` / `ChangeMe123!`, from `yarn db:seed`) for a head start locally.
+
+---
+
+## `POST /riders`
+
+Add a rider — the vendor's own staff, or a third-party dispatch rider they use often.
+
+**Body**
+
+```json
+{ "name": "Lawan Musa", "phone": "0803 555 1234", "vehicle": "bike" }
+```
+
+All three are required. `vehicle` is one of `"bike"`, `"car"`, `"van"`.
+
+- `201`: the created rider: `{ "id", "name", "phone", "vehicle", "active": true, "vendorId" }`.
+- `400` `{ "error": "...", "fields": [...] }`
+
+---
+
+## `POST /riders/:id/deactivate`
+
+Drops the rider from the "Assign a rider" list (`GET /riders?active=true` and `POST /orders`'s `riderId` check) without touching their order history — never a delete, which would orphan past orders. Sending again is fine.
+
+- `200`: the updated rider (`active: false`).
+- `404` `{ "error": "Rider not found" }` — including a rider that belongs to another vendor.
+
+## `POST /riders/:id/activate`
+
+The reverse: the rider can be assigned again. Sending again is fine.
+
+- `200`: the updated rider (`active: true`).
+- `404` `{ "error": "Rider not found" }`
 
 ---
 

@@ -27,10 +27,12 @@ export function vendorDetails(vendor: {
   businessName: string;
   businessAddress: string | null;
   businessPhone: string | null;
+  logoUrl: string | null;
 }) {
   return {
     name: vendor.businessName,
     address: vendor.businessAddress,
     phone: vendor.businessPhone,
+    logoUrl: vendor.logoUrl,
   };
 }

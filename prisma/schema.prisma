@@ -42,13 +42,34 @@ enum Vehicle {
   van
 }
 
+// A rough sense of what the vendor sells, matching the sign-up design's
+// "What do you sell?" options. Not used by any feature logic yet (no
+// category-based filtering or analytics — that's deferred, per CLAUDE.md);
+// just account context for now.
+enum VendorCategory {
+  retail_ecommerce   // "Retail / e-commerce"
+  food_restaurant    // "Food or restaurant"
+  pharmacy           // "Pharmacy"
+  delivery_logistics // "Delivery / logistics / dispatch company"
+  other              // "Other"
+}
+
 // A vendor account. Replaces the DEMO_VENDOR_* env settings: business
 // details now live per-account instead of one shared value for everyone.
 model Vendor {
   id                String          @id @default(cuid())
   businessName      String
-  businessAddress   String?
+  // Required: the rider's pickup point and what's shown to customers and
+  // riders as "delivered from" — a vague area isn't enough to navigate to.
+  businessAddress   String
   businessPhone     String?
+  // A small photo or logo, stored as a data URL (no object storage set up
+  // for this build). Optional; shown on the vendor's own dashboard.
+  logoUrl           String?
+  // Who's running the account — separate from businessPhone/businessAddress,
+  // which are what customers and riders see.
+  ownerName         String
+  category          VendorCategory
   email             String          @unique
   passwordHash      String
   createdAt         DateTime        @default(now())
@@ -62,6 +83,10 @@ model Rider {
   name     String
   phone    String
   vehicle  Vehicle?
+  // Deactivating a rider drops them from the create-order "Assign a rider"
+  // list without touching their orders or history — a rider who no longer
+  // works with this vendor, not a delete (that would orphan past orders).
+  active   Boolean  @default(true)
   vendorId String
   vendor   Vendor   @relation(fields: [vendorId], references: [id])
   orders   Order[]
