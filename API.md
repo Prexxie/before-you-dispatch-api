@@ -57,7 +57,7 @@ The customer (`/orders/:customerToken/...`) and rider (`/rider/:riderToken/...`)
 
 `businessAddress` is required — it's the rider's pickup point, not just context. `businessPhone` and `logoDataUrl` are optional (`null` if left out). `businessName`, `businessAddress`, `ownerName`, a valid `category`, a valid `email` and a `password` of at least 8 characters are required. `logoDataUrl`, if sent, must be a `data:image/(png|jpeg|webp|gif);base64,...` string under 500 KB decoded, or it's a `400`. `ownerName` and `category` are account context only — never shown to customers or riders. `category` is one of: `retail_ecommerce` ("Retail / e-commerce"), `food_restaurant` ("Food or restaurant"), `pharmacy` ("Pharmacy"), `delivery_logistics` ("Delivery / logistics / dispatch company"), `other`.
 
-- `201`: the created vendor (never includes `passwordHash`): `{ "id", "businessName", "businessAddress", "businessPhone", "logoUrl", "ownerName", "category", "email", "hasPassword" }`. Sets the session cookie.
+- `201`: the created vendor (never includes `passwordHash`): `{ "id", "businessName", "businessAddress", "businessPhone", "logoUrl", "ownerName", "category", "themeColor", "email", "hasPassword" }`. Sets the session cookie. `themeColor` always starts `"green"` (see `PATCH /auth/me` below).
 - `400` `{ "error": "...", "fields": [...] }`
 - `409` `{ "error": "An account with this email already exists", "fields": ["email"] }`
 
@@ -113,13 +113,15 @@ The logged-in vendor, or `401` if there isn't one. Used to restore a session on 
 
 ### `PATCH /auth/me`
 
-The "Edit Profile" form (design: "Vendor: Settings"). Body: any of `businessName`, `businessAddress`, `businessPhone`, `logoDataUrl`, `ownerName`, `category` — only the fields sent are changed. `email` and `password` aren't editable here (password has its own route below; email isn't editable in this build).
+The "Edit Profile" form, plus the "Workspace theme" swatch picker (design: "Vendor: Settings") — the picker just sends `{ "themeColor": "..." }` on its own on each click. Body: any of `businessName`, `businessAddress`, `businessPhone`, `logoDataUrl`, `ownerName`, `category`, `themeColor` — only the fields sent are changed. `email` and `password` aren't editable here (password has its own route below; email isn't editable in this build).
 
 ```json
 { "businessName": "Precious Food Business", "businessAddress": "12 Allen Avenue, Ikeja" }
 ```
 
-`businessPhone` and `logoDataUrl` clear to `null` when sent as an empty string. `businessName`, `businessAddress` and `ownerName` can't be cleared (`400` if sent empty); `category` must be one of the valid values if sent; `logoDataUrl` follows the same rules as at sign up.
+`businessPhone` and `logoDataUrl` clear to `null` when sent as an empty string. `businessName`, `businessAddress` and `ownerName` can't be cleared (`400` if sent empty); `category` and `themeColor` must be one of the valid values if sent; `logoDataUrl` follows the same rules as at sign up.
+
+`themeColor` is one of `green` (the default — literally "no override": the app's own green/crimson look, unchanged), `crimson`, `navy`, `amber`, `purple`. A non-`green` value re-tints the vendor's own dashboard chrome (primary buttons, the sidebar, borders, highlighted stats and badges) to that one color — purely cosmetic, never sent to or seen by customers or riders, and the "Before You Dispatch" brand mark itself never changes.
 
 - `200`: the updated vendor (same shape as signup).
 - `400` `{ "error": "...", "fields": [...] }` — including `{ "error": "Nothing to update", "fields": [] }` for an empty body.
