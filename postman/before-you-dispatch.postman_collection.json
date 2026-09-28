@@ -695,6 +695,24 @@
           }
         },
         {
+          "name": "Rider confirms pickup before dispatch (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409, not dispatched yet', () => {",
+                  "  pm.response.to.have.status(409);",
+                  "  pm.expect(pm.response.json().status).to.eql('confirmed');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{baseUrl}}/rider/{{riderToken}}/pickup" }
+        },
+        {
           "name": "Vendor sends the rider link (dispatch)",
           "event": [
             {
@@ -751,20 +769,74 @@
           }
         },
         {
-          "name": "Rider's delivery details",
+          "name": "Rider's delivery details (before pickup, no pin)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('200 with customer, item, pin and note', () => {",
+                  "pm.test('200 with customer and item, but no pin yet', () => {",
                   "  pm.response.to.have.status(200);",
                   "  const body = pm.response.json();",
                   "  pm.expect(body.status).to.eql('dispatched');",
                   "  pm.expect(body.customerName).to.eql('Amaka Obi');",
-                  "  pm.expect(body.location.landmarkNote).to.include('2nd floor');",
+                  "  pm.expect(body.location).to.eql(null);",
+                  "  pm.expect(body.pickedUpAt).to.eql(null);",
                   "  pm.expect(body.orderNumber).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{baseUrl}}/rider/{{riderToken}}" }
+        },
+        {
+          "name": "Rider confirms pickup",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with pickedUpAt and the pin', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.pickedUpAt).to.be.a('string');",
+                  "  pm.expect(body.location.landmarkNote).to.include('2nd floor');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{baseUrl}}/rider/{{riderToken}}/pickup" }
+        },
+        {
+          "name": "Rider confirms pickup again (still 200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('200, harmless', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{baseUrl}}/rider/{{riderToken}}/pickup" }
+        },
+        {
+          "name": "Rider's delivery details (after pickup, pin shown)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the pin and note now included', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.location.landmarkNote).to.include('2nd floor');",
+                  "  pm.expect(body.pickedUpAt).to.be.a('string');",
                   "});"
                 ]
               }
@@ -796,7 +868,85 @@
           }
         },
         {
-          "name": "Rider marks delivered",
+          "name": "Rider completes before the customer confirms (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409, waiting for the customer', () => {",
+                  "  pm.response.to.have.status(409);",
+                  "  pm.expect(pm.response.json().status).to.eql('dispatched');",
+                  "  pm.expect(pm.response.json().error).to.include('confirm');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/rider/{{riderToken}}/outcome",
+            "body": { "mode": "raw", "raw": "{\n  \"outcome\": \"delivered\"\n}" }
+          }
+        },
+        {
+          "name": "Customer taps \"I've received my delivery\"",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with receivedAt', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().receivedAt).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{customerToken}}/received" }
+        },
+        {
+          "name": "Customer taps it again (still 200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('200, harmless', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{customerToken}}/received" }
+        },
+        {
+          "name": "Rider marks failed after receipt (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409, the customer has the items', () => {",
+                  "  pm.response.to.have.status(409);",
+                  "  pm.expect(pm.response.json().error).to.include('received');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/rider/{{riderToken}}/outcome",
+            "body": { "mode": "raw", "raw": "{\n  \"outcome\": \"failed\",\n  \"reason\": \"customer_unreachable\"\n}" }
+          }
+        },
+        {
+          "name": "Rider marks delivery completed",
           "event": [
             {
               "listen": "test",
@@ -842,6 +992,97 @@
           }
         },
         {
+          "name": "Dashboard: page 1, most recently active first, includes this order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('200 with today + all-time counts, page 1, this order at the top', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(body.today).to.have.all.keys('total', 'awaitingConfirmation', 'outForDelivery', 'delivered');",
+                  "  pm.expect(body.counts).to.have.all.keys('total', 'awaitingConfirmation', 'confirmed', 'notReady', 'outForDelivery', 'delivered', 'failed');",
+                  "  pm.expect(body.counts.total).to.be.at.least(body.orders.length);",
+                  "  pm.expect(body.page).to.eql(1);",
+                  "  pm.expect(body.pageSize).to.eql(20);",
+                  "  pm.expect(body.orders.length).to.be.at.most(body.pageSize);",
+                  "  for (let i = 1; i < body.orders.length; i++) {",
+                  "    pm.expect(new Date(body.orders[i - 1].updatedAt) >= new Date(body.orders[i].updatedAt), 'sorted by updatedAt desc').to.be.true;",
+                  "  }",
+                  "  const row = body.orders.find((o) => o.id === pm.collectionVariables.get('orderId'));",
+                  "  pm.expect(row, 'this order is on page 1').to.exist;",
+                  "  pm.expect(row.status).to.eql('delivered');",
+                  "  pm.expect(body.orders[0].id, 'just-completed order sorts to the top').to.eql(row.id);",
+                  "  pm.collectionVariables.set('dashboardTotalPages', body.totalPages);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{baseUrl}}/orders" }
+        },
+        {
+          "name": "Dashboard: page 2 (all-time counts unchanged by paging)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const totalPages = Number(pm.collectionVariables.get('dashboardTotalPages'));",
+                  "const body = pm.response.json();",
+                  "pm.test('200, page 2', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(body.page).to.eql(2);",
+                  "  if (totalPages >= 2) pm.expect(body.orders.length).to.be.above(0);",
+                  "  pm.expect(body.counts.total).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{baseUrl}}/orders?page=2" }
+        },
+        {
+          "name": "Dashboard: filter by status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, every row matches the filter', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.orders.every((o) => o.status === 'delivered')).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{baseUrl}}/orders?status=delivered" }
+        },
+        {
+          "name": "Dashboard: invalid status (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 naming status', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().fields).to.eql(['status']);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{baseUrl}}/orders?status=bogus" }
+        },
+        {
           "name": "Vendor view shows delivered",
           "event": [
             {
@@ -849,17 +1090,154 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('delivered with a completion time', () => {",
+                  "pm.test('delivered, confirmed by the customer, with times', () => {",
                   "  pm.response.to.have.status(200);",
                   "  const body = pm.response.json();",
                   "  pm.expect(body.status).to.eql('delivered');",
+                  "  pm.expect(body.pickedUpAt).to.be.a('string');",
                   "  pm.expect(body.completedAt).to.be.a('string');",
+                  "  pm.expect(body.receivedAt).to.be.a('string');",
+                  "  pm.expect(body.deliveryConfirmedBy).to.eql('customer');",
                   "});"
                 ]
               }
             }
           ],
           "request": { "method": "GET", "url": "{{baseUrl}}/orders/{{orderId}}" }
+        }
+      ]
+    },
+    {
+      "name": "6. Vendor marks delivered (customer can't confirm)",
+      "item": [
+        {
+          "name": "Create, confirm and pin an order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const order = pm.response.json();",
+                  "pm.test('201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('overrideOrderId', order.id);",
+                  "pm.collectionVariables.set('overrideToken', order.customerToken);",
+                  "const base = pm.collectionVariables.get('baseUrl');",
+                  "const json = { 'Content-Type': 'application/json' };",
+                  "pm.sendRequest({ url: `${base}/orders/${order.customerToken}/confirm`, method: 'POST', header: json, body: { mode: 'raw', raw: JSON.stringify({ ready: true }) } }, () => {",
+                  "  pm.sendRequest({ url: `${base}/orders/${order.customerToken}/location`, method: 'POST', header: json, body: { mode: 'raw', raw: JSON.stringify({ lat: 6.61, lng: 3.36, landmarkNote: 'Green door' }) } }, () => {});",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/orders",
+            "body": { "mode": "raw", "raw": "{\n  \"customerName\": \"Kemi Ade\",\n  \"customerPhone\": \"0803 555 7777\",\n  \"itemDescription\": \"Birthday cake\",\n  \"riderId\": \"{{riderId}}\"\n}" }
+          }
+        },
+        {
+          "name": "Customer taps received before dispatch (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409, not sent out yet', () => {",
+                  "  pm.response.to.have.status(409);",
+                  "  pm.expect(pm.response.json().status).to.eql('confirmed');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{overrideToken}}/received" }
+        },
+        {
+          "name": "Vendor marks delivered before dispatch (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('409', () => pm.response.to.have.status(409));"]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{overrideOrderId}}/delivered" }
+        },
+        {
+          "name": "Vendor sends the rider link (dispatch)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('200 dispatched', () => pm.expect(pm.response.json().status).to.eql('dispatched'));"]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{overrideOrderId}}/dispatch" }
+        },
+        {
+          "name": "Vendor marks delivered for the customer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 delivered, confirmed by vendor', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.status).to.eql('delivered');",
+                  "  pm.expect(body.deliveryConfirmedBy).to.eql('vendor');",
+                  "  pm.expect(body.receivedAt).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{overrideOrderId}}/delivered" }
+        },
+        {
+          "name": "Vendor marks delivered again (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409, already finished', () => {",
+                  "  pm.response.to.have.status(409);",
+                  "  pm.expect(pm.response.json().status).to.eql('delivered');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{overrideOrderId}}/delivered" }
+        },
+        {
+          "name": "Customer taps received afterwards (still 200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, nothing to change', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().status).to.eql('delivered');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{overrideToken}}/received" }
         }
       ]
     }

@@ -7,13 +7,19 @@ Errors always come back as JSON with an `error` string, and `fields` when specif
 ## Order statuses
 
 ```
-pending_confirmation ─┬─> confirmed ──(pin saved, vendor sends rider link)──> dispatched ─┬─> delivered
-                      └─> not_ready ──(same day only)──> confirmed                        └─> failed (+ failureReason)
+pending_confirmation ─┬─> confirmed ──(pin saved, vendor sends rider link)──> dispatched ──(rider picks up)──> dispatched + pickedUpAt ─┬─(customer: "I've received it")─> + receivedAt ──(rider completes)──> delivered
+                      └─> not_ready ──(same day only)──> confirmed                                                                      ├─(vendor override)──────────────────────────────────────────> delivered
+                                                                                                                                          └─(rider, before receipt)─> failed (+ failureReason)
 ```
 
 - An order is only dispatched once it's `confirmed` **and** has a saved pin (the confirm-before-dispatch rule).
+- Every transition has its own timestamp, so the full timeline can be shown without guessing from `status` alone: `confirmedAt`, `notReadyAt`, `locationSavedAt`, `dispatchedAt`, `pickedUpAt`, `receivedAt`, `completedAt`.
+- Picking up is a rider-only step, separate from dispatch: the rider's pin and landmark note (`GET /rider/:riderToken`) are withheld until `pickedUpAt` is set, not just hidden in the UI. It's informational for sequencing, not a hard gate on the outcome endpoint — a rider who forgets to tap "picked up" can still mark the delivery completed or failed.
+- Completing a delivery needs the customer's receipt first (`receivedAt`). If the customer can't confirm, the vendor can mark it delivered (`deliveryConfirmedBy: "vendor"`). The rider can only mark it failed *before* the customer confirms receipt.
 - "Today" is the calendar day in Nigeria (WAT, UTC+1).
 - Failure reasons (preset only): `customer_not_ready`, `address_not_found`, `customer_unreachable`, `other`.
+- `deliveryConfirmedBy`: `customer` (they tapped "I've received my delivery") or `vendor` (override); `null` until then.
+- `vendor` (in several responses): `{ "name": "Precious Food Business", "address": "12 Allen Avenue, Ikeja", "phone": "0803 214 7765" }`, or `null`. Until vendor accounts exist it comes from the API's `DEMO_VENDOR_NAME`, `DEMO_VENDOR_ADDRESS` and `DEMO_VENDOR_PHONE` settings (`null` when no name is set; address and phone may be `null`).
 
 ---
 
@@ -75,6 +81,55 @@ All four fields are required, non-empty strings (surrounding whitespace is trimm
 - `400` `{ "error": "customerPhone must be a phone number, e.g. 0803 123 4567", "fields": ["customerPhone"] }`
 - `400` `{ "error": "riderId does not match any rider", "fields": ["riderId"] }`
 - `400` `{ "error": "Request body is not valid JSON" }`
+
+---
+
+## `GET /orders`
+
+**Every** order for the vendor dashboard (not just today's — a vendor with a handful of orders this week shouldn't see an empty dashboard because none of them landed today), most recently active first, paginated 20 at a time.
+
+"Recent" means `updatedAt`, not `createdAt`: any status change (confirmed, pin saved, dispatched, picked up, received, completed) bumps an order back to the top, so what the vendor acted on or heard about most recently is always visible without scrolling. `updatedAt` is set automatically by the database on every write.
+
+**Query parameters (both optional):**
+- `status`: one of the order statuses (below), returns only that status. Anything else is a `400`.
+- `page`: 1-based; anything else falls back to `1`.
+
+`200`:
+```json
+{
+  "vendorName": null,
+  "today": { "total": 7, "awaitingConfirmation": 2, "outForDelivery": 1, "delivered": 1 },
+  "counts": {
+    "total": 42, "awaitingConfirmation": 2, "confirmed": 1, "notReady": 1,
+    "outForDelivery": 1, "delivered": 36, "failed": 1
+  },
+  "page": 1,
+  "pageSize": 20,
+  "totalPages": 3,
+  "orders": [
+    {
+      "id": "cmujoqqwi0000mwsb7ut44ylh",
+      "orderNumber": 36,
+      "customerName": "Amaka Obi",
+      "itemDescription": "2 trays of jollof rice",
+      "riderName": "Tunde Bakare",
+      "status": "confirmed",
+      "hasLocation": true,
+      "pickedUpAt": null,
+      "receivedAt": null,
+      "failureReason": null,
+      "deliveryConfirmedBy": null,
+      "createdAt": "2026-09-28T10:38:16.242Z",
+      "updatedAt": "2026-09-28T10:41:02.118Z"
+    }
+  ]
+}
+```
+
+- `today`: a snapshot of *today's* orders only (Nigeria time), for the four "today" stat tiles. Not affected by `status` or `page`.
+- `counts`: all-time totals per status, for the filter chips. Also not affected by `status` or `page` — every chip always shows its true total, including the one currently selected.
+- `page` / `orders`: the current page of the (optionally `status`-filtered) full order list.
+- `400` → `{ "error": "status must be one of: ...", "fields": ["status"] }`
 
 ---
 
@@ -185,21 +240,38 @@ Public, with no auth. The customer's pin and landmark note (MVP feature 3). Can 
 
 Public, with no auth. Everything the rider needs in one place (MVP feature 4). Only exists once the customer's pin is saved.
 
-- `200`:
+`location` is `null` until the rider has confirmed pickup (`pickedUpAt`) — withheld by the API, not just hidden on the page. Everything else (who, what, the pickup point) is available straight away.
+
+- `200`, before pickup:
   ```json
   {
     "orderNumber": 36,
     "customerName": "Amaka Obi",
     "customerPhone": "0803 123 4567",
     "itemDescription": "2 trays of jollof rice",
-    "location": { "lat": 6.6018, "lng": 3.3515, "landmarkNote": "Blue gate, opposite the pharmacy" },
+    "location": null,
     "status": "dispatched",
     "failureReason": null,
     "riderName": "Tunde Bakare",
-    "vendorName": null
+    "vendorName": null,
+    "vendor": { "name": "Precious Food Business", "address": "12 Allen Avenue, Ikeja", "phone": "0803 214 7765" },
+    "pickedUpAt": null,
+    "receivedAt": null,
+    "deliveryConfirmedBy": null
   }
   ```
+  After pickup, `location` is filled in and `pickedUpAt` is set.
 - `404` → `{ "error": "Delivery not found" }`
+
+## `POST /rider/:riderToken/pickup`
+
+Public, with no auth. The rider confirms they've collected the order from the vendor. Unlocks `location` on `GET /rider/:riderToken`. No body. Tapping again is harmless.
+
+- `200` → `{ "pickedUpAt": "2026-09-29T13:15:00.000Z", "location": { "lat": 6.6018, "lng": 3.3515, "landmarkNote": "..." } }`
+- `404` → `{ "error": "Delivery not found" }`
+- `409` → `{ "error": "...", "status": "<current status>" }`:
+  - `confirmed` → `"This delivery hasn't been dispatched yet."`
+  - `delivered` / `failed` → `"This delivery is already finished."`
 
 ## `POST /rider/:riderToken/outcome`
 
@@ -214,3 +286,33 @@ Public, with no auth. The rider marks the delivery, once, while it's `dispatched
   - `confirmed` → `"This delivery hasn't been dispatched yet."`
   - `delivered` → `"This delivery is already marked as delivered."`
   - `failed` → `"This delivery is already marked as failed."`
+
+---
+
+## Receipt confirmation (changed 28 Sep, CLAUDE.md flow step 6)
+
+New fields in existing responses:
+- `GET /orders/:customerToken/confirm` adds `vendor`, `rider` (`{ "name", "phone" }` once the order is dispatched, else `null`), `pickedUpAt` and `receivedAt`.
+- `GET /rider/:riderToken` adds `vendor` (the pickup point), `pickedUpAt`, `receivedAt` and `deliveryConfirmedBy`.
+- `GET /orders/:id` adds `vendor`, `confirmedAt`, `notReadyAt`, `locationSavedAt`, `pickedUpAt`, `receivedAt` and `deliveryConfirmedBy`.
+- `GET /orders` adds `vendor`, and each row adds `pickedUpAt`, `receivedAt` and `deliveryConfirmedBy`.
+
+`POST /rider/:riderToken/outcome` now also answers `409` with `"status": "dispatched"`:
+- `{ "outcome": "delivered" }` before the customer confirms receipt → `"Waiting for the customer to confirm they've received it."`
+- `{ "outcome": "failed", ... }` after the customer confirmed receipt → `"The customer confirmed they received it, so it can't be marked failed."`
+
+## `POST /orders/:customerToken/received`
+
+Public, with no auth. The customer taps "I've received my delivery". No body.
+
+- `200` → `{ "status": "dispatched", "receivedAt": "2026-09-28T14:41:00.000Z" }`. Tapping again, or after the vendor already marked it delivered, also returns `200`.
+- `404` → `{ "error": "Order not found" }`
+- `409` → `{ "error": "Your delivery hasn't been sent out yet.", "status": "confirmed" }` (or, for a failed order, `"This delivery was marked as not delivered. Please contact the business."`)
+
+## `POST /orders/:id/delivered`
+
+The vendor marks a `dispatched` order delivered when the customer can't confirm it themselves. No body. Sets `completedAt`, and `deliveryConfirmedBy` becomes `customer` if they had already confirmed receipt, otherwise `vendor`.
+
+- `200` → the order, as in `GET /orders/:id`
+- `404` → `{ "error": "Order not found" }`
+- `409` → `{ "error": "This delivery is already finished." | "Only a dispatched order can be marked delivered.", "status": "<current status>" }`

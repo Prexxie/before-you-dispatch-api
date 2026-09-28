@@ -5,7 +5,7 @@ import {
   findOrderByCustomerToken as findOrderByToken,
 } from "../lib/customerToken";
 import { normalizePhone } from "../lib/phone";
-import { env } from "../config/env";
+import { env, vendorDetails } from "../config/env";
 import { isTodayInLagos, startOfLagosDay } from "../lib/lagosDay";
 import { orderLocation } from "../lib/orderView";
 import { Order, OrderStatus } from "../generated/prisma/client";
@@ -48,9 +48,16 @@ router.get("/:token/confirm", async (req, res) => {
     return;
   }
 
+  // The rider's name and phone only once they've been sent out.
+  const riderSent = ["dispatched", "delivered", "failed"].includes(order.status);
+  const rider = riderSent
+    ? await prisma.rider.findUnique({ where: { id: order.riderId } })
+    : null;
+
   res.json({
     customerFirstName: order.customerName.split(/\s+/)[0],
     vendorName: env.demoVendorName,
+    vendor: vendorDetails(),
     itemDescription: order.itemDescription,
     status: order.status,
     awaitingResponse: order.status === "pending_confirmation",
@@ -59,7 +66,47 @@ router.get("/:token/confirm", async (req, res) => {
     // "Not now" can be undone the same day ("Actually, I'm ready").
     canChangeToReady:
       order.status === "not_ready" && isTodayInLagos(order.createdAt),
+    rider: rider ? { name: rider.name, phone: rider.phone } : null,
+    pickedUpAt: order.pickedUpAt,
+    receivedAt: order.receivedAt,
   });
+});
+
+// POST /orders/:token/received — the customer taps "I've received my
+// delivery" once the items are in their hands. Only while dispatched; the
+// rider can then mark the delivery completed. Tapping again is harmless.
+router.post("/:token/received", async (req, res) => {
+  const order = await findOrderByToken(req.params.token);
+  if (!order) {
+    res.status(404).json({ error: "Order not found" });
+    return;
+  }
+
+  const receivedAt = new Date();
+  const { count } = await prisma.order.updateMany({
+    where: { id: order.id, status: "dispatched", receivedAt: null },
+    data: { receivedAt, deliveryConfirmedBy: "customer" },
+  });
+
+  const current = await findOrderByToken(req.params.token);
+  if (!current) {
+    res.status(404).json({ error: "Order not found" });
+    return;
+  }
+  const alreadyReceived =
+    current.receivedAt !== null ||
+    (current.status === "delivered" && current.deliveryConfirmedBy !== null);
+  if (count === 0 && !alreadyReceived) {
+    res.status(409).json({
+      error:
+        current.status === "failed"
+          ? "This delivery was marked as not delivered. Please contact the business."
+          : "Your delivery hasn't been sent out yet.",
+      status: current.status,
+    });
+    return;
+  }
+  res.json({ status: current.status, receivedAt: current.receivedAt });
 });
 
 // POST /orders/:token/confirm — body { ready: boolean }.
@@ -81,11 +128,12 @@ router.post("/:token/confirm", async (req, res) => {
   }
 
   const newStatus: OrderStatus = ready ? "confirmed" : "not_ready";
+  const now = new Date();
 
   // Conditional update so two taps racing each other can't both win.
   const { count } = await prisma.order.updateMany({
     where: { customerToken: token, status: "pending_confirmation" },
-    data: { status: newStatus },
+    data: ready ? { status: newStatus, confirmedAt: now } : { status: newStatus, notReadyAt: now },
   });
 
   // A customer who said "Not now" can change to ready later the same day
@@ -97,7 +145,7 @@ router.post("/:token/confirm", async (req, res) => {
         status: "not_ready",
         createdAt: { gte: startOfLagosDay() },
       },
-      data: { status: "confirmed" },
+      data: { status: "confirmed", confirmedAt: now },
     });
     if (undo.count === 1) {
       res.json({

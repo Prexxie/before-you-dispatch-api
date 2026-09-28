@@ -1,4 +1,5 @@
 import { Order, Rider } from "../generated/prisma/client";
+import { vendorDetails } from "../config/env";
 
 export function orderLocation(order: Order) {
   if (order.lat == null || order.lng == null || order.landmarkNote == null) {
@@ -20,6 +21,7 @@ export function vendorOrderView(order: Order & { rider: Rider }) {
     itemDescription: order.itemDescription,
     status: order.status,
     createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
     customerToken: order.customerToken,
     rider: {
       id: order.rider.id,
@@ -29,8 +31,15 @@ export function vendorOrderView(order: Order & { rider: Rider }) {
     },
     location,
     riderToken: location ? order.riderToken : null,
+    confirmedAt: order.confirmedAt,
+    notReadyAt: order.notReadyAt,
+    locationSavedAt: order.locationSavedAt,
     dispatchedAt: order.dispatchedAt,
+    pickedUpAt: order.pickedUpAt,
+    receivedAt: order.receivedAt,
     completedAt: order.completedAt,
     failureReason: order.failureReason,
+    deliveryConfirmedBy: order.deliveryConfirmedBy,
+    vendor: vendorDetails(),
   };
 }
