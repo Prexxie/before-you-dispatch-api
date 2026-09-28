@@ -1,0 +1,460 @@
+{
+  "info": {
+    "name": "Before You Dispatch API",
+    "description": "Requests for before-you-dispatch-api, in the order a delivery happens. Run a folder top to bottom (or use Run collection): 'Create order' saves customerToken into a collection variable, so later requests pick it up automatically. Each request has tests that check the response. Endpoint details: API.md.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:4000" },
+    { "key": "riderId", "value": "seed-rider-1" },
+    { "key": "phoneSuffix", "value": "" },
+    { "key": "customerToken", "value": "" },
+    { "key": "returningToken", "value": "" },
+    { "key": "notReadyToken", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Health check",
+      "request": { "method": "GET", "url": "{{baseUrl}}/health" },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 with status ok', () => {",
+              "  pm.response.to.have.status(200);",
+              "  pm.expect(pm.response.json().status).to.eql('ok');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Create order and confirm",
+      "item": [
+        {
+          "name": "Create order",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A fresh phone number each run, so saved pins from earlier runs don't interfere.",
+                  "pm.collectionVariables.set('phoneSuffix', String(Math.floor(1000 + Math.random() * 9000)));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const order = pm.response.json();",
+                  "pm.test('starts as pending_confirmation', () => pm.expect(order.status).to.eql('pending_confirmation'));",
+                  "pm.test('has a customerToken', () => pm.expect(order.customerToken).to.be.a('string'));",
+                  "pm.collectionVariables.set('customerToken', order.customerToken);",
+                  "console.log('customerToken saved:', order.customerToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/orders",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerName\": \"Amaka Obi\",\n  \"customerPhone\": \"0803 555 {{phoneSuffix}}\",\n  \"itemDescription\": \"2 trays of jollof rice\",\n  \"riderId\": \"{{riderId}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Create order: missing fields (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 naming the missing fields', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().fields).to.include.members(['customerPhone', 'riderId']);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/orders",
+            "body": { "mode": "raw", "raw": "{\n  \"customerName\": \"Amaka Obi\",\n  \"itemDescription\": \"2 trays of jollof rice\"\n}" }
+          }
+        },
+        {
+          "name": "Get confirmation details",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, awaiting the customer', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.awaitingResponse).to.eql(true);",
+                  "  pm.expect(body.location).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{baseUrl}}/orders/{{customerToken}}/confirm" }
+        },
+        {
+          "name": "Save location before confirming (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409, still pending_confirmation', () => {",
+                  "  pm.response.to.have.status(409);",
+                  "  pm.expect(pm.response.json().status).to.eql('pending_confirmation');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/orders/{{customerToken}}/location",
+            "body": { "mode": "raw", "raw": "{\n  \"lat\": 6.6018,\n  \"lng\": 3.3515,\n  \"landmarkNote\": \"Blue gate\"\n}" }
+          }
+        },
+        {
+          "name": "Customer taps \"I'm ready\"",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 confirmed', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().status).to.eql('confirmed');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/orders/{{customerToken}}/confirm",
+            "body": { "mode": "raw", "raw": "{\n  \"ready\": true\n}" }
+          }
+        },
+        {
+          "name": "Answer again (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409, answer not overwritten', () => {",
+                  "  pm.response.to.have.status(409);",
+                  "  pm.expect(pm.response.json().status).to.eql('confirmed');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/orders/{{customerToken}}/confirm",
+            "body": { "mode": "raw", "raw": "{\n  \"ready\": false\n}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Location (pin + landmark)",
+      "description": "Run folder 1 first so customerToken is a confirmed order.",
+      "item": [
+        {
+          "name": "Save location: bad body (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 naming lat, lng and landmarkNote', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().fields).to.have.members(['lat', 'lng', 'landmarkNote']);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/orders/{{customerToken}}/location",
+            "body": { "mode": "raw", "raw": "{\n  \"lat\": \"6.6\",\n  \"lng\": 999,\n  \"landmarkNote\": \"   \"\n}" }
+          }
+        },
+        {
+          "name": "Save location",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the stored location', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const { location } = pm.response.json();",
+                  "  pm.expect(location.landmarkNote).to.eql('Blue gate, opposite the pharmacy');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/orders/{{customerToken}}/location",
+            "body": { "mode": "raw", "raw": "{\n  \"lat\": 6.6018,\n  \"lng\": 3.3515,\n  \"landmarkNote\": \"Blue gate, opposite the pharmacy\"\n}" }
+          }
+        },
+        {
+          "name": "Correct the location",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, correction accepted while confirmed', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().location.landmarkNote).to.include('2nd floor');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/orders/{{customerToken}}/location",
+            "body": { "mode": "raw", "raw": "{\n  \"lat\": 6.6021,\n  \"lng\": 3.3519,\n  \"landmarkNote\": \"Blue gate, opposite the pharmacy, 2nd floor\"\n}" }
+          }
+        },
+        {
+          "name": "Get confirmation details (shows the pin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('location is the corrected pin', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.location.lat).to.eql(6.6021);",
+                  "  pm.expect(body.previousLocation).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{baseUrl}}/orders/{{customerToken}}/confirm" }
+        }
+      ]
+    },
+    {
+      "name": "3. Returning customer (saved pin)",
+      "description": "Run folders 1 and 2 first. Same customer, phone typed in +234 form.",
+      "item": [
+        {
+          "name": "Create order for the same customer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('returningToken', pm.response.json().customerToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/orders",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerName\": \"Amaka Obi\",\n  \"customerPhone\": \"+234 803 555 {{phoneSuffix}}\",\n  \"itemDescription\": \"1 carton of drinks\",\n  \"riderId\": \"{{riderId}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Customer taps \"I'm ready\"",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('200 confirmed', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/orders/{{returningToken}}/confirm",
+            "body": { "mode": "raw", "raw": "{\n  \"ready\": true\n}" }
+          }
+        },
+        {
+          "name": "Get confirmation details (previousLocation filled)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('previousLocation is the pin from the last order', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.location).to.eql(null);",
+                  "  pm.expect(body.previousLocation.landmarkNote).to.eql('Blue gate, opposite the pharmacy, 2nd floor');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{baseUrl}}/orders/{{returningToken}}/confirm" }
+        }
+      ]
+    },
+    {
+      "name": "4. Refused cases",
+      "item": [
+        {
+          "name": "Create order (for \"Not now\")",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('notReadyToken', pm.response.json().customerToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/orders",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerName\": \"Seun Adeyemi\",\n  \"customerPhone\": \"0803 444 0000\",\n  \"itemDescription\": \"Jollof tray\",\n  \"riderId\": \"{{riderId}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Customer taps \"Not now\"",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 not_ready', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().status).to.eql('not_ready');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/orders/{{notReadyToken}}/confirm",
+            "body": { "mode": "raw", "raw": "{\n  \"ready\": false\n}" }
+          }
+        },
+        {
+          "name": "Save location on a \"Not now\" order (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 not_ready', () => {",
+                  "  pm.response.to.have.status(409);",
+                  "  pm.expect(pm.response.json().status).to.eql('not_ready');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/orders/{{notReadyToken}}/location",
+            "body": { "mode": "raw", "raw": "{\n  \"lat\": 6.6,\n  \"lng\": 3.35,\n  \"landmarkNote\": \"Green door\"\n}" }
+          }
+        },
+        {
+          "name": "Unknown token (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('404', () => pm.response.to.have.status(404));"]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{baseUrl}}/orders/00000000-0000-4000-8000-000000000000/confirm" }
+        },
+        {
+          "name": "Malformed token (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('404', () => pm.response.to.have.status(404));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/orders/not-a-token/location",
+            "body": { "mode": "raw", "raw": "{\n  \"lat\": 6.6,\n  \"lng\": 3.35,\n  \"landmarkNote\": \"Gate\"\n}" }
+          }
+        }
+      ]
+    }
+  ]
+}

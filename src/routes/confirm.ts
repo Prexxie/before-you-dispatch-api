@@ -1,13 +1,15 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
-import { OrderStatus } from "../generated/prisma/client";
+import {
+  UUID_PATTERN,
+  findOrderByCustomerToken as findOrderByToken,
+} from "../lib/customerToken";
+import { normalizePhone } from "../lib/phone";
+import { Order, OrderStatus } from "../generated/prisma/client";
 
 // Customer confirmation (MVP feature 2). Public, no auth: the unguessable
 // customerToken in the URL is the only credential.
 const router = Router();
-
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const ALREADY_ANSWERED_MESSAGES: Partial<Record<OrderStatus, string>> = {
   confirmed: "You've already confirmed you're ready for this delivery.",
@@ -17,16 +19,28 @@ const ALREADY_ANSWERED_MESSAGES: Partial<Record<OrderStatus, string>> = {
 const PAST_CONFIRMATION_MESSAGE =
   "This delivery has already moved past confirmation.";
 
-// Invalid UUIDs would make Postgres throw on the cast, so treat them as
-// not-found before querying.
-function findOrderByToken(token: string) {
-  if (!UUID_PATTERN.test(token)) return null;
-  return prisma.order.findUnique({ where: { customerToken: token } });
+function orderLocation(order: Order) {
+  if (order.lat == null || order.lng == null || order.landmarkNote == null) {
+    return null;
+  }
+  return { lat: order.lat, lng: order.lng, landmarkNote: order.landmarkNote };
+}
+
+// A pin from the customer's earlier order, offered to prefill the map. Only
+// while they still need to share one for this order.
+async function previousLocation(order: Order) {
+  if (order.status !== "confirmed" || orderLocation(order)) return null;
+  const saved = await prisma.savedLocation.findUnique({
+    where: { phoneKey: normalizePhone(order.customerPhone) },
+  });
+  return saved
+    ? { lat: saved.lat, lng: saved.lng, landmarkNote: saved.landmarkNote }
+    : null;
 }
 
 // GET /orders/:token/confirm — what the customer page needs to ask
-// "you have a delivery today, are you ready?". Deliberately omits
-// customer name, phone, and internal ids.
+// "you have a delivery today, are you ready?" and, once confirmed, to show or
+// prefill their pin. Deliberately omits customer name, phone, and internal ids.
 router.get("/:token/confirm", async (req, res) => {
   const order = await findOrderByToken(req.params.token);
   if (!order) {
@@ -38,6 +52,8 @@ router.get("/:token/confirm", async (req, res) => {
     itemDescription: order.itemDescription,
     status: order.status,
     awaitingResponse: order.status === "pending_confirmation",
+    location: orderLocation(order),
+    previousLocation: await previousLocation(order),
   });
 });
 
