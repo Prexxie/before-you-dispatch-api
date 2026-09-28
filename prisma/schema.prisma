@@ -71,11 +71,15 @@ model Vendor {
   ownerName         String
   category          VendorCategory
   email             String          @unique
-  passwordHash      String
+  // Null for an account created with Google and never given a password
+  // (forgot-password lets one set one).
+  passwordHash      String?
+  googleId          String?         @unique
   createdAt         DateTime        @default(now())
   riders            Rider[]
   orders            Order[]
   savedLocations    SavedLocation[]
+  passwordResets    PasswordReset[]
 }
 
 model Rider {
@@ -156,4 +160,19 @@ model SavedLocation {
   updatedAt    DateTime @updatedAt
 
   @@id([vendorId, phoneKey])
+}
+
+// A "forgot password" link. Only a SHA-256 hash of the token is stored, so a
+// leaked database can't be used to reset anyone's password; the token itself
+// exists only in the emailed link. Single use, and short-lived.
+model PasswordReset {
+  id        String    @id @default(cuid())
+  vendorId  String
+  vendor    Vendor    @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([vendorId])
 }

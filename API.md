@@ -56,7 +56,7 @@ The customer (`/orders/:customerToken/...`) and rider (`/rider/:riderToken/...`)
 
 `businessAddress` is required — it's the rider's pickup point, not just context. `businessPhone` and `logoDataUrl` are optional (`null` if left out). `businessName`, `businessAddress`, `ownerName`, a valid `category`, a valid `email` and a `password` of at least 8 characters are required. `logoDataUrl`, if sent, must be a `data:image/(png|jpeg|webp|gif);base64,...` string under 500 KB decoded, or it's a `400`. `ownerName` and `category` are account context only — never shown to customers or riders. `category` is one of: `retail_ecommerce` ("Retail / e-commerce"), `food_restaurant` ("Food or restaurant"), `pharmacy` ("Pharmacy"), `delivery_logistics` ("Delivery / logistics / dispatch company"), `other`.
 
-- `201`: the created vendor (never includes `passwordHash`): `{ "id", "businessName", "businessAddress", "businessPhone", "logoUrl", "ownerName", "category", "email" }`. Sets the session cookie.
+- `201`: the created vendor (never includes `passwordHash`): `{ "id", "businessName", "businessAddress", "businessPhone", "logoUrl", "ownerName", "category", "email", "hasPassword" }`. Sets the session cookie.
 - `400` `{ "error": "...", "fields": [...] }`
 - `409` `{ "error": "An account with this email already exists", "fields": ["email"] }`
 
@@ -66,6 +66,39 @@ The customer (`/orders/:customerToken/...`) and rider (`/rider/:riderToken/...`)
 
 - `200`: the vendor (same shape as signup). Sets the session cookie.
 - `401` `{ "error": "Incorrect email or password" }`
+
+### `POST /auth/forgot-password`
+
+**Body** `{ "email": "..." }`
+
+- `200` `{ "message": "If that email has an account, a reset link is on its way." }` — the same response whether or not the email has an account, so this can't be used to find out who does. If it does, a link to `<WEB_URL>/vendor/reset-password?token=...` is emailed. It works once and expires after an hour; asking again voids the earlier link. Only a SHA-256 hash of the token is stored.
+- `400` `{ "error": "Enter a valid email address", "fields": ["email"] }`
+
+Email goes out over Brevo's HTTPS API (`EMAIL_API_KEY`, and `EMAIL_FROM`, a sender verified in Brevo). With no `EMAIL_API_KEY`, the link is printed to the API console instead, so it can be tried locally with nothing set up. A failed send is logged, never returned, for the same reason the response is generic.
+
+### `POST /auth/reset-password`
+
+**Body** `{ "token": "<from the emailed link>", "newPassword": "at least 8 characters" }`
+
+- `200` `{ "message": "Password updated" }`
+- `400` `{ "error": "newPassword must be at least 8 characters", "fields": ["newPassword"] }`
+- `400` `{ "error": "This reset link is invalid or has expired. Request a new one.", "fields": ["token"] }` — unknown, already used, or expired.
+
+### `POST /auth/google`
+
+Sign in with Google. **Body** `{ "credential": "<ID token from the Sign in with Google button>" }`. The API verifies it with Google (signature, that it was issued for *our* client ID, expiry, and that Google vouches for the email) — never trusting what the browser says about who signed in.
+
+- `200` `{ "status": "signed_in", "vendor": {...} }` — sets the session cookie. Used when an account is already linked to this Google user, or one exists with the same email (Google-verified, so it is linked on the spot).
+- `200` `{ "status": "needs_setup", "ticket": "...", "email": "...", "name": "..." }` — no account yet. No cookie is set; business details are still needed. The `ticket` is a signed token valid for 15 minutes that carries the verified identity into the next call.
+- `401` `{ "error": "Couldn't verify your Google sign-in. Try again." }` — also when `GOOGLE_CLIENT_ID` isn't configured.
+
+### `POST /auth/google/signup`
+
+Creates the account for a `needs_setup` Google user. **Body** `{ "ticket", "businessName", "businessAddress", "ownerName", "category", "businessPhone"?, "logoDataUrl"? }`, validated like `POST /auth/signup`. The email comes from the ticket, never the body. The account has no password (`hasPassword: false`) until the vendor sets one, via forgot-password or Settings.
+
+- `201` the vendor; sets the session cookie.
+- `400` `{ "error": "...", "fields": [...] }` — including `"ticket"` for an expired or forged one.
+- `409` an account with this email or Google user already exists.
 
 ### `POST /auth/logout`
 
@@ -94,7 +127,7 @@ The "Edit Profile" form (design: "Vendor: Settings"). Body: any of `businessName
 
 **Body** `{ "currentPassword": "...", "newPassword": "at least 8 characters" }`
 
-- `200` `{ "message": "Password changed" }`
+- `200` `{ "message": "Password changed" }`. An account made with Google (`hasPassword: false`) has no current password to check, so it can set one without `currentPassword`.
 - `400` `{ "error": "newPassword must be at least 8 characters", "fields": ["newPassword"] }`
 - `401` `{ "error": "Current password is incorrect", "fields": ["currentPassword"] }`
 
