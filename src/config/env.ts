@@ -4,26 +4,33 @@ dotenv.config();
 
 export const env = {
   port: Number(process.env.PORT) || 4000,
+  nodeEnv: process.env.NODE_ENV ?? "development",
   corsOrigins: (process.env.CORS_ORIGIN ?? "http://localhost:3000")
     .split(",")
     .map((origin) => origin.trim())
     .filter(Boolean),
   databaseUrl: process.env.DATABASE_URL ?? "",
   termiiApiKey: process.env.TERMII_API_KEY ?? "",
-  // The business customers and riders see ("from Precious Food Business,
-  // 12 Allen Avenue, Ikeja, 0803 214 7765") until vendor accounts exist
-  // (week 2). Any left empty is simply not shown.
-  demoVendorName: process.env.DEMO_VENDOR_NAME?.trim() || null,
-  demoVendorAddress: process.env.DEMO_VENDOR_ADDRESS?.trim() || null,
-  demoVendorPhone: process.env.DEMO_VENDOR_PHONE?.trim() || null,
+  // Signs the vendor session cookie. Must be set (and kept secret) outside
+  // local dev — a guessable fallback would let anyone forge a session.
+  jwtSecret: process.env.JWT_SECRET ?? "dev-only-insecure-secret",
 };
 
-// Vendor details as the API returns them (null when no name is set).
-export function vendorDetails() {
-  if (!env.demoVendorName) return null;
+if (env.nodeEnv === "production" && env.jwtSecret === "dev-only-insecure-secret") {
+  throw new Error("JWT_SECRET must be set in production");
+}
+
+// The business a delivery is from, as the API returns it to customers and
+// riders. Comes from the logged-in vendor's account (see src/lib/auth.ts
+// and src/routes/auth.ts) — no longer a single shared env setting.
+export function vendorDetails(vendor: {
+  businessName: string;
+  businessAddress: string | null;
+  businessPhone: string | null;
+}) {
   return {
-    name: env.demoVendorName,
-    address: env.demoVendorAddress,
-    phone: env.demoVendorPhone,
+    name: vendor.businessName,
+    address: vendor.businessAddress,
+    phone: vendor.businessPhone,
   };
 }

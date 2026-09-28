@@ -1,12 +1,16 @@
 import express, { ErrorRequestHandler } from "express";
 import cors from "cors";
+import cookieParser from "cookie-parser";
 import { env } from "./config/env";
 import routes from "./routes";
 
 const app = express();
 
-app.use(cors({ origin: env.corsOrigins }));
+// credentials: true so the browser sends/keeps the vendor session cookie on
+// cross-origin calls (a raw API origin, without the web app's /api proxy).
+app.use(cors({ origin: env.corsOrigins, credentials: true }));
 app.use(express.json());
+app.use(cookieParser());
 app.use(routes);
 
 const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {

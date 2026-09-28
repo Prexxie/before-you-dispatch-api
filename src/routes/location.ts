@@ -72,8 +72,8 @@ router.post("/:token/location", async (req, res) => {
     if (count === 0) return false;
     const phoneKey = normalizePhone(order.customerPhone);
     await tx.savedLocation.upsert({
-      where: { phoneKey },
-      create: { phoneKey, ...location },
+      where: { vendorId_phoneKey: { vendorId: order.vendorId, phoneKey } },
+      create: { vendorId: order.vendorId, phoneKey, ...location },
       update: location,
     });
     return true;

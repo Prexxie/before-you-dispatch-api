@@ -2,7 +2,7 @@ import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { UUID_PATTERN } from "../lib/customerToken";
 import { orderLocation } from "../lib/orderView";
-import { env, vendorDetails } from "../config/env";
+import { vendorDetails } from "../config/env";
 import { FailureReason, OrderStatus } from "../generated/prisma/client";
 
 // Rider handoff (MVP feature 4). Public, no auth: the unguessable riderToken
@@ -16,7 +16,7 @@ async function findJob(token: string) {
   if (!UUID_PATTERN.test(token)) return null;
   const order = await prisma.order.findUnique({
     where: { riderToken: token },
-    include: { rider: true },
+    include: { rider: true, vendor: true },
   });
   return order && orderLocation(order) ? order : null;
 }
@@ -40,9 +40,9 @@ router.get("/:token", async (req, res) => {
     status: order.status,
     failureReason: order.failureReason,
     riderName: order.rider.name,
-    vendorName: env.demoVendorName,
+    vendorName: order.vendor.businessName,
     // The pickup point.
-    vendor: vendorDetails(),
+    vendor: vendorDetails(order.vendor),
     pickedUpAt: order.pickedUpAt,
     // Set once the customer taps "I've received my delivery"; the rider can
     // only complete the delivery after that.

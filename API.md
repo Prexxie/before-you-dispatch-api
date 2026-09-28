@@ -19,7 +19,7 @@ pending_confirmation ─┬─> confirmed ──(pin saved, vendor sends rider l
 - "Today" is the calendar day in Nigeria (WAT, UTC+1).
 - Failure reasons (preset only): `customer_not_ready`, `address_not_found`, `customer_unreachable`, `other`.
 - `deliveryConfirmedBy`: `customer` (they tapped "I've received my delivery") or `vendor` (override); `null` until then.
-- `vendor` (in several responses): `{ "name": "Precious Food Business", "address": "12 Allen Avenue, Ikeja", "phone": "0803 214 7765" }`, or `null`. Until vendor accounts exist it comes from the API's `DEMO_VENDOR_NAME`, `DEMO_VENDOR_ADDRESS` and `DEMO_VENDOR_PHONE` settings (`null` when no name is set; address and phone may be `null`).
+- `vendor` (in several responses): `{ "name": "Precious Food Business", "address": "12 Allen Avenue, Ikeja", "phone": "0803 214 7765" }`, or `null` if the vendor hasn't set an address/phone (`name` is always set — it's required at sign up). Comes from the logged-in vendor's account.
 
 ---
 
@@ -29,19 +29,68 @@ pending_confirmation ─┬─> confirmed ──(pin saved, vendor sends rider l
 
 ---
 
+## Vendor authentication
+
+Every route below this point except `POST /auth/signup` and `POST /auth/login` requires a session: an httpOnly cookie (`bad_session`, a JWT) set by signup or login and sent automatically by the browser on same-origin requests. Missing or invalid session → `401 { "error": "Sign in to continue" }`.
+
+A vendor's own data (orders, riders, saved pins) is scoped to their account — one vendor never sees another's, and a request for another vendor's order by id is a `404`, the same as one that doesn't exist.
+
+The customer (`/orders/:customerToken/...`) and rider (`/rider/:riderToken/...`) routes stay public, exactly as before: the unguessable token in the URL is their credential, not a login.
+
+### `POST /auth/signup`
+
+**Body**
+
+```json
+{
+  "businessName": "Precious Food Business",
+  "businessAddress": "12 Allen Avenue, Ikeja",
+  "businessPhone": "0803 214 7765",
+  "email": "owner@precious-food.example",
+  "password": "at least 8 characters"
+}
+```
+
+`businessAddress` and `businessPhone` are optional (`null` if left out) — shown to customers and riders as "delivered from". `businessName`, a valid `email` and a `password` of at least 8 characters are required.
+
+- `201`: the created vendor (never includes `passwordHash`): `{ "id", "businessName", "businessAddress", "businessPhone", "email" }`. Sets the session cookie.
+- `400` `{ "error": "...", "fields": [...] }`
+- `409` `{ "error": "An account with this email already exists", "fields": ["email"] }`
+
+### `POST /auth/login`
+
+**Body** `{ "email": "...", "password": "..." }`
+
+- `200`: the vendor (same shape as signup). Sets the session cookie.
+- `401` `{ "error": "Incorrect email or password" }`
+
+### `POST /auth/logout`
+
+Clears the session cookie. `204`, no body.
+
+### `GET /auth/me`
+
+The logged-in vendor, or `401` if there isn't one. Used to restore a session on page load.
+
+`200`: the vendor (same shape as signup).
+
+---
+
 ## `GET /riders`
 
-The riders a vendor can assign when creating an order, sorted by name.
+The logged-in vendor's riders, for the create-order rider dropdown, sorted by name.
 
 `200` → `[{ "id": "seed-rider-2", "name": "Chidi Okafor", "phone": "+2348120045521", "vehicle": "car" }, ...]`
 
 `vehicle` is `"bike"`, `"car"`, `"van"` or `null`.
 
+Adding riders isn't built yet (week 2) — a newly signed-up vendor has none to assign until then; use the seeded demo vendor (`demo@beforeyoudispatch.test` / `ChangeMe123!`, from `yarn db:seed`) to test order creation locally.
+
 ---
 
 ## `POST /orders`
 
-The vendor creates an order and assigns a rider.
+The logged-in vendor creates an order and assigns one of their own riders.
 
 **Body**
 
@@ -79,8 +128,9 @@ All four fields are required, non-empty strings (surrounding whitespace is trimm
   `customerToken` goes in the customer's link (`/confirm/<customerToken>` on the web app). Never put `id` or `orderNumber` in a public link. `orderNumber` is the short number the vendor sees ("Order #36").
 - `400` `{ "error": "Missing or empty required fields", "fields": [...] }`
 - `400` `{ "error": "customerPhone must be a phone number, e.g. 0803 123 4567", "fields": ["customerPhone"] }`
-- `400` `{ "error": "riderId does not match any rider", "fields": ["riderId"] }`
+- `400` `{ "error": "riderId does not match any rider", "fields": ["riderId"] }` — also returned if `riderId` belongs to a different vendor.
 - `400` `{ "error": "Request body is not valid JSON" }`
+- `401` `{ "error": "Sign in to continue" }`
 
 ---
 
@@ -191,7 +241,7 @@ Public, with no auth. Gives the customer page what it needs to ask "you have a d
     "previousLocation": { "lat": 6.6021, "lng": 3.3519, "landmarkNote": "Blue gate, opposite the pharmacy" }
   }
   ```
-  - `vendorName`: the business the delivery is from. Until vendor accounts exist it comes from the API's `DEMO_VENDOR_NAME` setting, and is `null` when that isn't set.
+  - `vendorName`: the business the delivery is from (the logged-in vendor's `businessName` — always set, since it's required at sign up).
   - `awaitingResponse`: when `false`, the customer has already answered; show the status instead of the buttons.
   - `location`: the pin saved for *this* order, or `null` if none yet.
   - `previousLocation`: the pin this customer (matched by phone number) saved on an earlier order, to prefill the map. Only sent while the order is `confirmed` and has no `location` yet; otherwise `null`.

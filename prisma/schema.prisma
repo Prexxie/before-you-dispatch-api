@@ -42,12 +42,31 @@ enum Vehicle {
   van
 }
 
+// A vendor account. Replaces the DEMO_VENDOR_* env settings: business
+// details now live per-account instead of one shared value for everyone.
+model Vendor {
+  id                String          @id @default(cuid())
+  businessName      String
+  businessAddress   String?
+  businessPhone     String?
+  email             String          @unique
+  passwordHash      String
+  createdAt         DateTime        @default(now())
+  riders            Rider[]
+  orders            Order[]
+  savedLocations    SavedLocation[]
+}
+
 model Rider {
-  id      String   @id @default(cuid())
-  name    String
-  phone   String
-  vehicle Vehicle?
-  orders  Order[]
+  id       String   @id @default(cuid())
+  name     String
+  phone    String
+  vehicle  Vehicle?
+  vendorId String
+  vendor   Vendor   @relation(fields: [vendorId], references: [id])
+  orders   Order[]
+
+  @@index([vendorId])
 }
 
 model Order {
@@ -60,6 +79,8 @@ model Order {
   itemDescription String
   riderId         String
   rider           Rider       @relation(fields: [riderId], references: [id])
+  vendorId        String
+  vendor          Vendor      @relation(fields: [vendorId], references: [id])
   status          OrderStatus @default(pending_confirmation)
   createdAt       DateTime    @default(now())
   // Bumped by Prisma on every write (any status change). Drives the
@@ -93,14 +114,21 @@ model Order {
   deliveryConfirmedBy DeliveryConfirmer?
 
   @@index([riderId])
+  @@index([vendorId])
 }
 
 // The last pin a customer shared, so it loads automatically on their next
-// order. Keyed by normalized phone number (see src/lib/phone.ts).
+// order. Keyed by normalized phone number (see src/lib/phone.ts) within one
+// vendor's customers — the same phone number could be a different person to
+// a different vendor.
 model SavedLocation {
-  phoneKey     String   @id
+  vendorId     String
+  vendor       Vendor   @relation(fields: [vendorId], references: [id])
+  phoneKey     String
   lat          Float
   lng          Float
   landmarkNote String
   updatedAt    DateTime @updatedAt
+
+  @@id([vendorId, phoneKey])
 }

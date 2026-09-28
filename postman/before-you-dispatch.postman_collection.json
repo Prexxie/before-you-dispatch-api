@@ -5,17 +5,116 @@
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    { "key": "baseUrl", "value": "http://localhost:4000" },
-    { "key": "riderId", "value": "seed-rider-1" },
-    { "key": "phoneSuffix", "value": "" },
-    { "key": "customerToken", "value": "" },
-    { "key": "returningToken", "value": "" },
-    { "key": "notReadyToken", "value": "" }
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000"
+    },
+    {
+      "key": "riderId",
+      "value": "seed-rider-1"
+    },
+    {
+      "key": "phoneSuffix",
+      "value": ""
+    },
+    {
+      "key": "customerToken",
+      "value": ""
+    },
+    {
+      "key": "returningToken",
+      "value": ""
+    },
+    {
+      "key": "notReadyToken",
+      "value": ""
+    }
   ],
   "item": [
     {
+      "name": "0. Vendor auth",
+      "item": [
+        {
+          "name": "Signed-out: vendor routes are blocked",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/orders"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 without a session', () => {",
+                  "  pm.response.to.have.status(401);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Log in as the demo vendor",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"demo@beforeyoudispatch.test\",\n  \"password\": \"ChangeMe123!\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 and sets the session cookie; the rest of this collection runs as this vendor', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().businessName).to.eql('Precious Food Business');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /auth/me returns the logged-in vendor",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/auth/me"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with the vendor (no passwordHash)', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.have.all.keys('id', 'businessName', 'businessAddress', 'businessPhone', 'email');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "Health check",
-      "request": { "method": "GET", "url": "{{baseUrl}}/health" },
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/health"
+      },
       "event": [
         {
           "listen": "test",
@@ -32,8 +131,11 @@
       ]
     },
     {
-      "name": "List riders",
-      "request": { "method": "GET", "url": "{{baseUrl}}/riders" },
+      "name": "List riders (as the logged-in vendor)",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/riders"
+      },
       "event": [
         {
           "listen": "test",
@@ -89,7 +191,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/orders",
             "body": {
               "mode": "raw",
@@ -115,9 +222,17 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/orders",
-            "body": { "mode": "raw", "raw": "{\n  \"customerName\": \"Amaka Obi\",\n  \"itemDescription\": \"2 trays of jollof rice\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerName\": \"Amaka Obi\",\n  \"itemDescription\": \"2 trays of jollof rice\"\n}"
+            }
           }
         },
         {
@@ -138,9 +253,17 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/orders",
-            "body": { "mode": "raw", "raw": "{\n  \"customerName\": \"Amaka Obi\",\n  \"customerPhone\": \"12345\",\n  \"itemDescription\": \"2 trays of jollof rice\",\n  \"riderId\": \"{{riderId}}\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerName\": \"Amaka Obi\",\n  \"customerPhone\": \"12345\",\n  \"itemDescription\": \"2 trays of jollof rice\",\n  \"riderId\": \"{{riderId}}\"\n}"
+            }
           }
         },
         {
@@ -166,7 +289,10 @@
               }
             }
           ],
-          "request": { "method": "GET", "url": "{{baseUrl}}/orders/{{customerToken}}/confirm" }
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/orders/{{customerToken}}/confirm"
+          }
         },
         {
           "name": "Save location before confirming (409)",
@@ -186,9 +312,17 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/orders/{{customerToken}}/location",
-            "body": { "mode": "raw", "raw": "{\n  \"lat\": 6.6018,\n  \"lng\": 3.3515,\n  \"landmarkNote\": \"Blue gate\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lat\": 6.6018,\n  \"lng\": 3.3515,\n  \"landmarkNote\": \"Blue gate\"\n}"
+            }
           }
         },
         {
@@ -209,9 +343,17 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/orders/{{customerToken}}/confirm",
-            "body": { "mode": "raw", "raw": "{\n  \"ready\": true\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ready\": true\n}"
+            }
           }
         },
         {
@@ -232,9 +374,17 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/orders/{{customerToken}}/confirm",
-            "body": { "mode": "raw", "raw": "{\n  \"ready\": false\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ready\": false\n}"
+            }
           }
         }
       ]
@@ -261,9 +411,17 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/orders/{{customerToken}}/location",
-            "body": { "mode": "raw", "raw": "{\n  \"lat\": \"6.6\",\n  \"lng\": 999,\n  \"landmarkNote\": \"   \"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lat\": \"6.6\",\n  \"lng\": 999,\n  \"landmarkNote\": \"   \"\n}"
+            }
           }
         },
         {
@@ -285,9 +443,17 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/orders/{{customerToken}}/location",
-            "body": { "mode": "raw", "raw": "{\n  \"lat\": 6.6018,\n  \"lng\": 3.3515,\n  \"landmarkNote\": \"Blue gate, opposite the pharmacy\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lat\": 6.6018,\n  \"lng\": 3.3515,\n  \"landmarkNote\": \"Blue gate, opposite the pharmacy\"\n}"
+            }
           }
         },
         {
@@ -308,9 +474,17 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/orders/{{customerToken}}/location",
-            "body": { "mode": "raw", "raw": "{\n  \"lat\": 6.6021,\n  \"lng\": 3.3519,\n  \"landmarkNote\": \"Blue gate, opposite the pharmacy, 2nd floor\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lat\": 6.6021,\n  \"lng\": 3.3519,\n  \"landmarkNote\": \"Blue gate, opposite the pharmacy, 2nd floor\"\n}"
+            }
           }
         },
         {
@@ -331,7 +505,10 @@
               }
             }
           ],
-          "request": { "method": "GET", "url": "{{baseUrl}}/orders/{{customerToken}}/confirm" }
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/orders/{{customerToken}}/confirm"
+          }
         }
       ]
     },
@@ -355,7 +532,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/orders",
             "body": {
               "mode": "raw",
@@ -370,15 +552,25 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.test('200 confirmed', () => pm.response.to.have.status(200));"]
+                "exec": [
+                  "pm.test('200 confirmed', () => pm.response.to.have.status(200));"
+                ]
               }
             }
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/orders/{{returningToken}}/confirm",
-            "body": { "mode": "raw", "raw": "{\n  \"ready\": true\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ready\": true\n}"
+            }
           }
         },
         {
@@ -399,7 +591,10 @@
               }
             }
           ],
-          "request": { "method": "GET", "url": "{{baseUrl}}/orders/{{returningToken}}/confirm" }
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/orders/{{returningToken}}/confirm"
+          }
         }
       ]
     },
@@ -423,7 +618,12 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/orders",
             "body": {
               "mode": "raw",
@@ -449,9 +649,17 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/orders/{{notReadyToken}}/confirm",
-            "body": { "mode": "raw", "raw": "{\n  \"ready\": false\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ready\": false\n}"
+            }
           }
         },
         {
@@ -472,9 +680,17 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/orders/{{notReadyToken}}/location",
-            "body": { "mode": "raw", "raw": "{\n  \"lat\": 6.6,\n  \"lng\": 3.35,\n  \"landmarkNote\": \"Green door\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lat\": 6.6,\n  \"lng\": 3.35,\n  \"landmarkNote\": \"Green door\"\n}"
+            }
           }
         },
         {
@@ -495,7 +711,10 @@
               }
             }
           ],
-          "request": { "method": "GET", "url": "{{baseUrl}}/orders/{{notReadyOrderId}}" }
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/orders/{{notReadyOrderId}}"
+          }
         },
         {
           "name": "Dispatch a \"Not now\" order (409)",
@@ -513,7 +732,10 @@
               }
             }
           ],
-          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{notReadyOrderId}}/dispatch" }
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/orders/{{notReadyOrderId}}/dispatch"
+          }
         },
         {
           "name": "Get confirmation details (can still change to ready today)",
@@ -531,7 +753,10 @@
               }
             }
           ],
-          "request": { "method": "GET", "url": "{{baseUrl}}/orders/{{notReadyToken}}/confirm" }
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/orders/{{notReadyToken}}/confirm"
+          }
         },
         {
           "name": "Customer taps \"Actually, I'm ready\" (undo Not now)",
@@ -551,9 +776,17 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/orders/{{notReadyToken}}/confirm",
-            "body": { "mode": "raw", "raw": "{\n  \"ready\": true\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ready\": true\n}"
+            }
           }
         },
         {
@@ -574,9 +807,17 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/orders/{{notReadyToken}}/confirm",
-            "body": { "mode": "raw", "raw": "{\n  \"ready\": false\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ready\": false\n}"
+            }
           }
         },
         {
@@ -595,7 +836,10 @@
               }
             }
           ],
-          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{notReadyOrderId}}/dispatch" }
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/orders/{{notReadyOrderId}}/dispatch"
+          }
         },
         {
           "name": "Unknown rider token (404)",
@@ -604,11 +848,16 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.test('404', () => pm.response.to.have.status(404));"]
+                "exec": [
+                  "pm.test('404', () => pm.response.to.have.status(404));"
+                ]
               }
             }
           ],
-          "request": { "method": "GET", "url": "{{baseUrl}}/rider/00000000-0000-4000-8000-000000000000" }
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/rider/00000000-0000-4000-8000-000000000000"
+          }
         },
         {
           "name": "Unknown token (404)",
@@ -617,11 +866,16 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.test('404', () => pm.response.to.have.status(404));"]
+                "exec": [
+                  "pm.test('404', () => pm.response.to.have.status(404));"
+                ]
               }
             }
           ],
-          "request": { "method": "GET", "url": "{{baseUrl}}/orders/00000000-0000-4000-8000-000000000000/confirm" }
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/orders/00000000-0000-4000-8000-000000000000/confirm"
+          }
         },
         {
           "name": "Malformed token (404)",
@@ -630,15 +884,25 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.test('404', () => pm.response.to.have.status(404));"]
+                "exec": [
+                  "pm.test('404', () => pm.response.to.have.status(404));"
+                ]
               }
             }
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/orders/not-a-token/location",
-            "body": { "mode": "raw", "raw": "{\n  \"lat\": 6.6,\n  \"lng\": 3.35,\n  \"landmarkNote\": \"Gate\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lat\": 6.6,\n  \"lng\": 3.35,\n  \"landmarkNote\": \"Gate\"\n}"
+            }
           }
         }
       ]
@@ -669,7 +933,10 @@
               }
             }
           ],
-          "request": { "method": "GET", "url": "{{baseUrl}}/orders/{{orderId}}" }
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/orders/{{orderId}}"
+          }
         },
         {
           "name": "Rider marks outcome before dispatch (409)",
@@ -689,9 +956,17 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/rider/{{riderToken}}/outcome",
-            "body": { "mode": "raw", "raw": "{\n  \"outcome\": \"delivered\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"outcome\": \"delivered\"\n}"
+            }
           }
         },
         {
@@ -710,7 +985,10 @@
               }
             }
           ],
-          "request": { "method": "POST", "url": "{{baseUrl}}/rider/{{riderToken}}/pickup" }
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/rider/{{riderToken}}/pickup"
+          }
         },
         {
           "name": "Vendor sends the rider link (dispatch)",
@@ -730,7 +1008,10 @@
               }
             }
           ],
-          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{orderId}}/dispatch" }
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/orders/{{orderId}}/dispatch"
+          }
         },
         {
           "name": "Send the rider link again (still 200)",
@@ -739,11 +1020,16 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.test('200, resending is fine', () => pm.response.to.have.status(200));"]
+                "exec": [
+                  "pm.test('200, resending is fine', () => pm.response.to.have.status(200));"
+                ]
               }
             }
           ],
-          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{orderId}}/dispatch" }
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/orders/{{orderId}}/dispatch"
+          }
         },
         {
           "name": "Customer changes pin after dispatch (409)",
@@ -763,9 +1049,17 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/orders/{{customerToken}}/location",
-            "body": { "mode": "raw", "raw": "{\n  \"lat\": 6.7,\n  \"lng\": 3.4,\n  \"landmarkNote\": \"Moved\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lat\": 6.7,\n  \"lng\": 3.4,\n  \"landmarkNote\": \"Moved\"\n}"
+            }
           }
         },
         {
@@ -789,7 +1083,10 @@
               }
             }
           ],
-          "request": { "method": "GET", "url": "{{baseUrl}}/rider/{{riderToken}}" }
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/rider/{{riderToken}}"
+          }
         },
         {
           "name": "Rider confirms pickup",
@@ -809,7 +1106,10 @@
               }
             }
           ],
-          "request": { "method": "POST", "url": "{{baseUrl}}/rider/{{riderToken}}/pickup" }
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/rider/{{riderToken}}/pickup"
+          }
         },
         {
           "name": "Rider confirms pickup again (still 200)",
@@ -818,11 +1118,16 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.test('200, harmless', () => pm.response.to.have.status(200));"]
+                "exec": [
+                  "pm.test('200, harmless', () => pm.response.to.have.status(200));"
+                ]
               }
             }
           ],
-          "request": { "method": "POST", "url": "{{baseUrl}}/rider/{{riderToken}}/pickup" }
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/rider/{{riderToken}}/pickup"
+          }
         },
         {
           "name": "Rider's delivery details (after pickup, pin shown)",
@@ -842,7 +1147,10 @@
               }
             }
           ],
-          "request": { "method": "GET", "url": "{{baseUrl}}/rider/{{riderToken}}" }
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/rider/{{riderToken}}"
+          }
         },
         {
           "name": "Mark failed without a valid reason (400)",
@@ -862,9 +1170,17 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/rider/{{riderToken}}/outcome",
-            "body": { "mode": "raw", "raw": "{\n  \"outcome\": \"failed\",\n  \"reason\": \"traffic\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"outcome\": \"failed\",\n  \"reason\": \"traffic\"\n}"
+            }
           }
         },
         {
@@ -886,9 +1202,17 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/rider/{{riderToken}}/outcome",
-            "body": { "mode": "raw", "raw": "{\n  \"outcome\": \"delivered\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"outcome\": \"delivered\"\n}"
+            }
           }
         },
         {
@@ -907,7 +1231,10 @@
               }
             }
           ],
-          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{customerToken}}/received" }
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/orders/{{customerToken}}/received"
+          }
         },
         {
           "name": "Customer taps it again (still 200)",
@@ -916,11 +1243,16 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.test('200, harmless', () => pm.response.to.have.status(200));"]
+                "exec": [
+                  "pm.test('200, harmless', () => pm.response.to.have.status(200));"
+                ]
               }
             }
           ],
-          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{customerToken}}/received" }
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/orders/{{customerToken}}/received"
+          }
         },
         {
           "name": "Rider marks failed after receipt (409)",
@@ -940,9 +1272,17 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/rider/{{riderToken}}/outcome",
-            "body": { "mode": "raw", "raw": "{\n  \"outcome\": \"failed\",\n  \"reason\": \"customer_unreachable\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"outcome\": \"failed\",\n  \"reason\": \"customer_unreachable\"\n}"
+            }
           }
         },
         {
@@ -963,9 +1303,17 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/rider/{{riderToken}}/outcome",
-            "body": { "mode": "raw", "raw": "{\n  \"outcome\": \"delivered\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"outcome\": \"delivered\"\n}"
+            }
           }
         },
         {
@@ -986,9 +1334,17 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/rider/{{riderToken}}/outcome",
-            "body": { "mode": "raw", "raw": "{\n  \"outcome\": \"failed\",\n  \"reason\": \"address_not_found\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"outcome\": \"failed\",\n  \"reason\": \"address_not_found\"\n}"
+            }
           }
         },
         {
@@ -1021,7 +1377,10 @@
               }
             }
           ],
-          "request": { "method": "GET", "url": "{{baseUrl}}/orders" }
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/orders"
+          }
         },
         {
           "name": "Dashboard: page 2 (all-time counts unchanged by paging)",
@@ -1043,7 +1402,10 @@
               }
             }
           ],
-          "request": { "method": "GET", "url": "{{baseUrl}}/orders?page=2" }
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/orders?page=2"
+          }
         },
         {
           "name": "Dashboard: filter by status",
@@ -1062,7 +1424,10 @@
               }
             }
           ],
-          "request": { "method": "GET", "url": "{{baseUrl}}/orders?status=delivered" }
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/orders?status=delivered"
+          }
         },
         {
           "name": "Dashboard: invalid status (400)",
@@ -1080,7 +1445,10 @@
               }
             }
           ],
-          "request": { "method": "GET", "url": "{{baseUrl}}/orders?status=bogus" }
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/orders?status=bogus"
+          }
         },
         {
           "name": "Vendor view shows delivered",
@@ -1103,7 +1471,10 @@
               }
             }
           ],
-          "request": { "method": "GET", "url": "{{baseUrl}}/orders/{{orderId}}" }
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/orders/{{orderId}}"
+          }
         }
       ]
     },
@@ -1133,9 +1504,17 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": "{{baseUrl}}/orders",
-            "body": { "mode": "raw", "raw": "{\n  \"customerName\": \"Kemi Ade\",\n  \"customerPhone\": \"0803 555 7777\",\n  \"itemDescription\": \"Birthday cake\",\n  \"riderId\": \"{{riderId}}\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerName\": \"Kemi Ade\",\n  \"customerPhone\": \"0803 555 7777\",\n  \"itemDescription\": \"Birthday cake\",\n  \"riderId\": \"{{riderId}}\"\n}"
+            }
           }
         },
         {
@@ -1154,7 +1533,10 @@
               }
             }
           ],
-          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{overrideToken}}/received" }
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/orders/{{overrideToken}}/received"
+          }
         },
         {
           "name": "Vendor marks delivered before dispatch (409)",
@@ -1163,11 +1545,16 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.test('409', () => pm.response.to.have.status(409));"]
+                "exec": [
+                  "pm.test('409', () => pm.response.to.have.status(409));"
+                ]
               }
             }
           ],
-          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{overrideOrderId}}/delivered" }
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/orders/{{overrideOrderId}}/delivered"
+          }
         },
         {
           "name": "Vendor sends the rider link (dispatch)",
@@ -1176,11 +1563,16 @@
               "listen": "test",
               "script": {
                 "type": "text/javascript",
-                "exec": ["pm.test('200 dispatched', () => pm.expect(pm.response.json().status).to.eql('dispatched'));"]
+                "exec": [
+                  "pm.test('200 dispatched', () => pm.expect(pm.response.json().status).to.eql('dispatched'));"
+                ]
               }
             }
           ],
-          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{overrideOrderId}}/dispatch" }
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/orders/{{overrideOrderId}}/dispatch"
+          }
         },
         {
           "name": "Vendor marks delivered for the customer",
@@ -1201,7 +1593,10 @@
               }
             }
           ],
-          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{overrideOrderId}}/delivered" }
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/orders/{{overrideOrderId}}/delivered"
+          }
         },
         {
           "name": "Vendor marks delivered again (409)",
@@ -1219,7 +1614,10 @@
               }
             }
           ],
-          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{overrideOrderId}}/delivered" }
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/orders/{{overrideOrderId}}/delivered"
+          }
         },
         {
           "name": "Customer taps received afterwards (still 200)",
@@ -1237,7 +1635,10 @@
               }
             }
           ],
-          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{overrideToken}}/received" }
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/orders/{{overrideToken}}/received"
+          }
         }
       ]
     }

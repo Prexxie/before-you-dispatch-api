@@ -4,9 +4,16 @@ import { isValidPhone } from "../lib/phone";
 import { vendorOrderView } from "../lib/orderView";
 import { OrderStatus } from "../generated/prisma/client";
 import { startOfLagosDay } from "../lib/lagosDay";
-import { env, vendorDetails } from "../config/env";
+import { requireVendor } from "../middleware/requireVendor";
+import { vendorDetails } from "../config/env";
 
 const router = Router();
+
+// Applied per-route below, not as a router-wide router.use(): this router,
+// confirm.ts and location.ts are all mounted at the same "/orders" prefix in
+// routes/index.ts, so a blanket .use() here would also run (and 401) on
+// requests actually meant for confirm.ts/location.ts's public,
+// token-authenticated routes before Express gets to matching those routers.
 
 const REQUIRED_FIELDS = [
   "customerName",
@@ -17,8 +24,9 @@ const REQUIRED_FIELDS = [
 
 type CreateOrderBody = Record<(typeof REQUIRED_FIELDS)[number], string>;
 
-// POST /orders — vendor creates a delivery order and assigns a rider.
-router.post("/", async (req, res) => {
+// POST /orders — vendor creates a delivery order and assigns a rider (one of
+// their own — riderId is checked against the logged-in vendor).
+router.post("/", requireVendor, async (req, res) => {
   const body = req.body ?? {};
 
   const missing = REQUIRED_FIELDS.filter(
@@ -46,7 +54,7 @@ router.post("/", async (req, res) => {
   }
 
   const rider = await prisma.rider.findUnique({ where: { id: riderId } });
-  if (!rider) {
+  if (!rider || rider.vendorId !== req.vendorId) {
     res.status(400).json({
       error: "riderId does not match any rider",
       fields: ["riderId"],
@@ -55,7 +63,13 @@ router.post("/", async (req, res) => {
   }
 
   const order = await prisma.order.create({
-    data: { customerName, customerPhone, itemDescription, riderId },
+    data: {
+      customerName,
+      customerPhone,
+      itemDescription,
+      riderId,
+      vendorId: req.vendorId,
+    },
   });
 
   res.status(201).json(order);
@@ -83,7 +97,7 @@ const STATUS_COUNT_KEY: Record<OrderStatus, string> = {
 // page or filter, so every chip always shows its true total. `today` is a
 // separate, always-today snapshot for the stat tiles at the top, since
 // those are explicitly labelled "today" in the design.
-router.get("/", async (req, res) => {
+router.get("/", requireVendor, async (req, res) => {
   const statusParam = req.query.status;
   if (
     typeof statusParam === "string" &&
@@ -96,12 +110,15 @@ router.get("/", async (req, res) => {
     return;
   }
   const status = statusParam as OrderStatus | undefined;
-  const where = status ? { status } : {};
+  const where = status
+    ? { status, vendorId: req.vendorId }
+    : { vendorId: req.vendorId };
 
   const pageParam = Number(req.query.page);
   const page = Number.isInteger(pageParam) && pageParam > 0 ? pageParam : 1;
 
-  const [total, orders, statusGroups, todayOrders] = await Promise.all([
+  const [vendor, total, orders, statusGroups, todayOrders] = await Promise.all([
+    prisma.vendor.findUniqueOrThrow({ where: { id: req.vendorId } }),
     prisma.order.count({ where }),
     prisma.order.findMany({
       where,
@@ -110,9 +127,13 @@ router.get("/", async (req, res) => {
       skip: (page - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
     }),
-    prisma.order.groupBy({ by: ["status"], _count: { _all: true } }),
+    prisma.order.groupBy({
+      by: ["status"],
+      where: { vendorId: req.vendorId },
+      _count: { _all: true },
+    }),
     prisma.order.findMany({
-      where: { createdAt: { gte: startOfLagosDay() } },
+      where: { vendorId: req.vendorId, createdAt: { gte: startOfLagosDay() } },
       select: { status: true },
     }),
   ]);
@@ -134,8 +155,8 @@ router.get("/", async (req, res) => {
     todayOrders.filter((o) => o.status === s).length;
 
   res.json({
-    vendorName: env.demoVendorName,
-    vendor: vendorDetails(),
+    vendorName: vendor.businessName,
+    vendor: vendorDetails(vendor),
     today: {
       total: todayOrders.length,
       awaitingConfirmation: todayCount("pending_confirmation"),
@@ -167,15 +188,19 @@ router.get("/", async (req, res) => {
 // Order ids are cuids; anything else is a customer token or junk.
 const ORDER_ID_PATTERN = /^c[a-z0-9]{20,32}$/;
 
-function findVendorOrder(id: string) {
+function findVendorOrder(id: string, vendorId: string) {
   if (!ORDER_ID_PATTERN.test(id)) return null;
-  return prisma.order.findUnique({ where: { id }, include: { rider: true } });
+  return prisma.order.findFirst({
+    where: { id, vendorId },
+    include: { rider: true, vendor: true },
+  });
 }
 
 // GET /orders/:id — one order as the vendor sees it (full details, rider,
-// pin, and the rider's link token once the pin is saved).
-router.get("/:id", async (req, res) => {
-  const order = await findVendorOrder(req.params.id);
+// pin, and the rider's link token once the pin is saved). 404s for another
+// vendor's order, same as one that doesn't exist.
+router.get("/:id", requireVendor, async (req, res) => {
+  const order = await findVendorOrder(req.params.id as string, req.vendorId);
   if (!order) {
     res.status(404).json({ error: "Order not found" });
     return;
@@ -193,8 +218,8 @@ const NOT_DISPATCHABLE_MESSAGES: Partial<Record<OrderStatus, string>> = {
 // POST /orders/:id/dispatch — the vendor sent the rider their link, so the
 // rider is on the way. Only for confirmed orders with a saved pin: the core
 // confirm-before-dispatch rule. Sending again once dispatched is fine.
-router.post("/:id/dispatch", async (req, res) => {
-  const order = await findVendorOrder(req.params.id);
+router.post("/:id/dispatch", requireVendor, async (req, res) => {
+  const order = await findVendorOrder(req.params.id as string, req.vendorId);
   if (!order) {
     res.status(404).json({ error: "Order not found" });
     return;
@@ -205,7 +230,7 @@ router.post("/:id/dispatch", async (req, res) => {
     data: { status: "dispatched", dispatchedAt: new Date() },
   });
 
-  const current = await findVendorOrder(order.id);
+  const current = await findVendorOrder(order.id, req.vendorId);
   if (!current) {
     res.status(404).json({ error: "Order not found" });
     return;
@@ -226,8 +251,8 @@ router.post("/:id/dispatch", async (req, res) => {
 // when the customer can't confirm it themselves (no data, phone off, a
 // neighbour took it). Records who confirmed receipt: the customer if they
 // already tapped "I've received my delivery", otherwise the vendor.
-router.post("/:id/delivered", async (req, res) => {
-  const order = await findVendorOrder(req.params.id);
+router.post("/:id/delivered", requireVendor, async (req, res) => {
+  const order = await findVendorOrder(req.params.id as string, req.vendorId);
   if (!order) {
     res.status(404).json({ error: "Order not found" });
     return;
@@ -242,7 +267,7 @@ router.post("/:id/delivered", async (req, res) => {
     },
   });
 
-  const current = await findVendorOrder(order.id);
+  const current = await findVendorOrder(order.id, req.vendorId);
   if (!current) {
     res.status(404).json({ error: "Order not found" });
     return;

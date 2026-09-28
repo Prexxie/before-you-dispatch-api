@@ -5,7 +5,7 @@ import {
   findOrderByCustomerToken as findOrderByToken,
 } from "../lib/customerToken";
 import { normalizePhone } from "../lib/phone";
-import { env, vendorDetails } from "../config/env";
+import { vendorDetails } from "../config/env";
 import { isTodayInLagos, startOfLagosDay } from "../lib/lagosDay";
 import { orderLocation } from "../lib/orderView";
 import { Order, OrderStatus } from "../generated/prisma/client";
@@ -30,7 +30,12 @@ const EARLIER_DAY_MESSAGE =
 async function previousLocation(order: Order) {
   if (order.status !== "confirmed" || orderLocation(order)) return null;
   const saved = await prisma.savedLocation.findUnique({
-    where: { phoneKey: normalizePhone(order.customerPhone) },
+    where: {
+      vendorId_phoneKey: {
+        vendorId: order.vendorId,
+        phoneKey: normalizePhone(order.customerPhone),
+      },
+    },
   });
   return saved
     ? { lat: saved.lat, lng: saved.lng, landmarkNote: saved.landmarkNote }
@@ -56,8 +61,8 @@ router.get("/:token/confirm", async (req, res) => {
 
   res.json({
     customerFirstName: order.customerName.split(/\s+/)[0],
-    vendorName: env.demoVendorName,
-    vendor: vendorDetails(),
+    vendorName: order.vendor.businessName,
+    vendor: vendorDetails(order.vendor),
     itemDescription: order.itemDescription,
     status: order.status,
     awaitingResponse: order.status === "pending_confirmation",

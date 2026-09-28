@@ -1,4 +1,4 @@
-import { Order, Rider } from "../generated/prisma/client";
+import { Order, Rider, Vendor } from "../generated/prisma/client";
 import { vendorDetails } from "../config/env";
 
 export function orderLocation(order: Order) {
@@ -11,7 +11,7 @@ export function orderLocation(order: Order) {
 // What the vendor sees for one order. The rider's token only appears once
 // the customer's pin is saved: no rider link before the customer is ready
 // and has said where to find them.
-export function vendorOrderView(order: Order & { rider: Rider }) {
+export function vendorOrderView(order: Order & { rider: Rider; vendor: Vendor }) {
   const location = orderLocation(order);
   return {
     id: order.id,
@@ -40,6 +40,6 @@ export function vendorOrderView(order: Order & { rider: Rider }) {
     completedAt: order.completedAt,
     failureReason: order.failureReason,
     deliveryConfirmedBy: order.deliveryConfirmedBy,
-    vendor: vendorDetails(),
+    vendor: vendorDetails(order.vendor),
   };
 }
