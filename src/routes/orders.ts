@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
+import { isValidPhone } from "../lib/phone";
 
 const router = Router();
 
@@ -31,6 +32,14 @@ router.post("/", async (req, res) => {
     Object.fromEntries(
       REQUIRED_FIELDS.map((field) => [field, body[field].trim()]),
     ) as CreateOrderBody;
+
+  if (!isValidPhone(customerPhone)) {
+    res.status(400).json({
+      error: "customerPhone must be a phone number, e.g. 0803 123 4567",
+      fields: ["customerPhone"],
+    });
+    return;
+  }
 
   const rider = await prisma.rider.findUnique({ where: { id: riderId } });
   if (!rider) {

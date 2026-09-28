@@ -5,6 +5,7 @@ import {
   findOrderByCustomerToken as findOrderByToken,
 } from "../lib/customerToken";
 import { normalizePhone } from "../lib/phone";
+import { env } from "../config/env";
 import { Order, OrderStatus } from "../generated/prisma/client";
 
 // Customer confirmation (MVP feature 2). Public, no auth: the unguessable
@@ -40,7 +41,8 @@ async function previousLocation(order: Order) {
 
 // GET /orders/:token/confirm — what the customer page needs to ask
 // "you have a delivery today, are you ready?" and, once confirmed, to show or
-// prefill their pin. Deliberately omits customer name, phone, and internal ids.
+// prefill their pin. Only the customer's first name, for the greeting; never
+// their full name, phone, or internal ids.
 router.get("/:token/confirm", async (req, res) => {
   const order = await findOrderByToken(req.params.token);
   if (!order) {
@@ -49,6 +51,8 @@ router.get("/:token/confirm", async (req, res) => {
   }
 
   res.json({
+    customerFirstName: order.customerName.split(/\s+/)[0],
+    vendorName: env.demoVendorName,
     itemDescription: order.itemDescription,
     status: order.status,
     awaitingResponse: order.status === "pending_confirmation",

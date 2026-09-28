@@ -19,15 +19,25 @@ enum OrderStatus {
   failed
 }
 
+enum Vehicle {
+  bike
+  car
+  van
+}
+
 model Rider {
-  id     String  @id @default(cuid())
-  name   String
-  phone  String
-  orders Order[]
+  id      String   @id @default(cuid())
+  name    String
+  phone   String
+  vehicle Vehicle?
+  orders  Order[]
 }
 
 model Order {
   id              String      @id @default(cuid())
+  // Short number the vendor sees ("Order #12"). Internal only: public links
+  // use customerToken, never this or id.
+  orderNumber     Int         @unique @default(autoincrement())
   customerName    String
   customerPhone   String
   itemDescription String

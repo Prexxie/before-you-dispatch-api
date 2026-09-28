@@ -8,3 +8,11 @@ export function normalizePhone(raw: string): string {
   }
   return digits;
 }
+
+// Loose check: enough digits to be a real number (E.164 allows up to 15), so
+// WhatsApp and SMS links built from it can work. A Nigerian mobile number
+// normalizes to 13 digits (234 + 10).
+export function isValidPhone(raw: string): boolean {
+  const length = normalizePhone(raw).length;
+  return length >= 10 && length <= 15;
+}

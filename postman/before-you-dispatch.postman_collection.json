@@ -32,6 +32,29 @@
       ]
     },
     {
+      "name": "List riders",
+      "request": { "method": "GET", "url": "{{baseUrl}}/riders" },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 with a list of riders', () => {",
+              "  pm.response.to.have.status(200);",
+              "  const riders = pm.response.json();",
+              "  pm.expect(riders).to.be.an('array').that.is.not.empty;",
+              "  pm.expect(riders[0]).to.have.all.keys('id', 'name', 'phone', 'vehicle');",
+              "});",
+              "pm.test('includes the seeded rider used by this collection', () => {",
+              "  pm.expect(pm.response.json().map((r) => r.id)).to.include(pm.collectionVariables.get('riderId'));",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "1. Create order and confirm",
       "item": [
         {
@@ -56,6 +79,7 @@
                   "const order = pm.response.json();",
                   "pm.test('starts as pending_confirmation', () => pm.expect(order.status).to.eql('pending_confirmation'));",
                   "pm.test('has a customerToken', () => pm.expect(order.customerToken).to.be.a('string'));",
+                  "pm.test('has an orderNumber', () => pm.expect(order.orderNumber).to.be.a('number'));",
                   "pm.collectionVariables.set('customerToken', order.customerToken);",
                   "console.log('customerToken saved:', order.customerToken);"
                 ]
@@ -96,6 +120,29 @@
           }
         },
         {
+          "name": "Create order: invalid phone (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 naming customerPhone', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().fields).to.eql(['customerPhone']);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/orders",
+            "body": { "mode": "raw", "raw": "{\n  \"customerName\": \"Amaka Obi\",\n  \"customerPhone\": \"12345\",\n  \"itemDescription\": \"2 trays of jollof rice\",\n  \"riderId\": \"{{riderId}}\"\n}" }
+          }
+        },
+        {
           "name": "Get confirmation details",
           "event": [
             {
@@ -108,6 +155,11 @@
                   "  const body = pm.response.json();",
                   "  pm.expect(body.awaitingResponse).to.eql(true);",
                   "  pm.expect(body.location).to.eql(null);",
+                  "});",
+                  "pm.test('greets by first name only, no phone', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.customerFirstName).to.eql('Amaka');",
+                  "  pm.expect(body).to.not.have.any.keys('customerName', 'customerPhone', 'id');",
                   "});"
                 ]
               }

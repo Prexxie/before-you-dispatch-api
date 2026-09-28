@@ -1,14 +1,22 @@
 import { prisma } from "../src/lib/prisma";
 
-// A sample rider so POST /orders has a riderId to assign during local dev.
-// There's no rider-management endpoint in the MVP yet.
+// Sample riders so the create order form has someone to assign during local
+// dev. Riders get their own management page in week 2. Safe to re-run.
+const RIDERS = [
+  { id: "seed-rider-1", name: "Tunde Bakare", phone: "+2348012345678", vehicle: "bike" },
+  { id: "seed-rider-2", name: "Chidi Okafor", phone: "+2348120045521", vehicle: "car" },
+  { id: "seed-rider-3", name: "Ngozi Eze", phone: "+2349067713348", vehicle: "bike" },
+] as const;
+
 async function main() {
-  const rider = await prisma.rider.upsert({
-    where: { id: "seed-rider-1" },
-    update: {},
-    create: { id: "seed-rider-1", name: "Tunde Bakare", phone: "+2348012345678" },
-  });
-  console.log(`Seeded rider ${rider.id} (${rider.name})`);
+  for (const data of RIDERS) {
+    const rider = await prisma.rider.upsert({
+      where: { id: data.id },
+      update: { vehicle: data.vehicle },
+      create: data,
+    });
+    console.log(`Seeded rider ${rider.id} (${rider.name})`);
+  }
 }
 
 main()
