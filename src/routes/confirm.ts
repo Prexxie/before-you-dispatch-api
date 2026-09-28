@@ -6,6 +6,8 @@ import {
 } from "../lib/customerToken";
 import { normalizePhone } from "../lib/phone";
 import { env } from "../config/env";
+import { isTodayInLagos, startOfLagosDay } from "../lib/lagosDay";
+import { orderLocation } from "../lib/orderView";
 import { Order, OrderStatus } from "../generated/prisma/client";
 
 // Customer confirmation (MVP feature 2). Public, no auth: the unguessable
@@ -20,12 +22,8 @@ const ALREADY_ANSWERED_MESSAGES: Partial<Record<OrderStatus, string>> = {
 const PAST_CONFIRMATION_MESSAGE =
   "This delivery has already moved past confirmation.";
 
-function orderLocation(order: Order) {
-  if (order.lat == null || order.lng == null || order.landmarkNote == null) {
-    return null;
-  }
-  return { lat: order.lat, lng: order.lng, landmarkNote: order.landmarkNote };
-}
+const EARLIER_DAY_MESSAGE =
+  "This delivery was for an earlier day. Please contact the business to arrange a new one.";
 
 // A pin from the customer's earlier order, offered to prefill the map. Only
 // while they still need to share one for this order.
@@ -58,6 +56,9 @@ router.get("/:token/confirm", async (req, res) => {
     awaitingResponse: order.status === "pending_confirmation",
     location: orderLocation(order),
     previousLocation: await previousLocation(order),
+    // "Not now" can be undone the same day ("Actually, I'm ready").
+    canChangeToReady:
+      order.status === "not_ready" && isTodayInLagos(order.createdAt),
   });
 });
 
@@ -87,15 +88,37 @@ router.post("/:token/confirm", async (req, res) => {
     data: { status: newStatus },
   });
 
+  // A customer who said "Not now" can change to ready later the same day
+  // (never the other way round). Same conditional-update guard as above.
+  if (count === 0 && ready) {
+    const undo = await prisma.order.updateMany({
+      where: {
+        customerToken: token,
+        status: "not_ready",
+        createdAt: { gte: startOfLagosDay() },
+      },
+      data: { status: "confirmed" },
+    });
+    if (undo.count === 1) {
+      res.json({
+        status: "confirmed",
+        message: "Thanks! You're confirmed for today's delivery.",
+      });
+      return;
+    }
+  }
+
   if (count === 0) {
     const order = await findOrderByToken(token);
     if (!order) {
       res.status(404).json({ error: "Order not found" });
       return;
     }
+    const tooLate = ready && order.status === "not_ready";
     res.status(409).json({
-      error:
-        ALREADY_ANSWERED_MESSAGES[order.status] ?? PAST_CONFIRMATION_MESSAGE,
+      error: tooLate
+        ? EARLIER_DAY_MESSAGE
+        : (ALREADY_ANSWERED_MESSAGES[order.status] ?? PAST_CONFIRMATION_MESSAGE),
       status: order.status,
     });
     return;

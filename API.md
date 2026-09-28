@@ -6,7 +6,14 @@ Errors always come back as JSON with an `error` string, and `fields` when specif
 
 ## Order statuses
 
-`pending_confirmation` → `confirmed` or `not_ready` → (later features) `dispatched` → `delivered` or `failed`
+```
+pending_confirmation ─┬─> confirmed ──(pin saved, vendor sends rider link)──> dispatched ─┬─> delivered
+                      └─> not_ready ──(same day only)──> confirmed                        └─> failed (+ failureReason)
+```
+
+- An order is only dispatched once it's `confirmed` **and** has a saved pin (the confirm-before-dispatch rule).
+- "Today" is the calendar day in Nigeria (WAT, UTC+1).
+- Failure reasons (preset only): `customer_not_ready`, `address_not_found`, `customer_unreachable`, `other`.
 
 ---
 
@@ -71,6 +78,48 @@ All four fields are required, non-empty strings (surrounding whitespace is trimm
 
 ---
 
+## `GET /orders/:id`
+
+One order as the vendor sees it (vendor side; `id` is the order's `id`, never a public token).
+
+`200`:
+```json
+{
+  "id": "cmujoqqwi0000mwsb7ut44ylh",
+  "orderNumber": 36,
+  "customerName": "Amaka Obi",
+  "customerPhone": "0803 123 4567",
+  "itemDescription": "2 trays of jollof rice",
+  "status": "confirmed",
+  "createdAt": "2026-09-28T10:38:16.242Z",
+  "customerToken": "bb32509d-7776-4518-94f6-6e8538888139",
+  "rider": { "id": "seed-rider-1", "name": "Tunde Bakare", "phone": "+2348012345678", "vehicle": "bike" },
+  "location": { "lat": 6.6018, "lng": 3.3515, "landmarkNote": "Blue gate, opposite the pharmacy" },
+  "riderToken": "5f0c3c2e-8f1d-4d7a-9a55-0b3f1f6f2c11",
+  "dispatchedAt": null,
+  "completedAt": null,
+  "failureReason": null
+}
+```
+
+`riderToken` goes in the rider's link (`/rider/<riderToken>` on the web app). It's `null` until the customer's pin is saved, so there is no rider link before the customer is ready and has said where to find them.
+
+- `404` → `{ "error": "Order not found" }`
+
+## `POST /orders/:id/dispatch`
+
+The vendor sent the rider their link. Moves a `confirmed` order with a saved pin to `dispatched` and sets `dispatchedAt`. No body.
+
+- `200` → the order, as in `GET /orders/:id`. Sending again while already `dispatched` also returns `200`, unchanged.
+- `404` → `{ "error": "Order not found" }`
+- `409` → `{ "error": "...", "status": "<current status>" }`:
+  - `pending_confirmation` → `"The customer hasn't confirmed they're ready yet."`
+  - `not_ready` → `"The customer said they're not ready today."`
+  - `confirmed` with no pin → `"The customer hasn't shared their location yet."`
+  - `delivered` / `failed` → `"This delivery is already finished."`
+
+---
+
 ## `GET /orders/:customerToken/confirm`
 
 Public, with no auth. Gives the customer page what it needs to ask "you have a delivery today, are you ready?" and, once they've confirmed, to show or prefill their pin. It sends only the customer's first name (for "Hi Amaka"), never their full name, phone, or internal ids.
@@ -91,11 +140,12 @@ Public, with no auth. Gives the customer page what it needs to ask "you have a d
   - `awaitingResponse`: when `false`, the customer has already answered; show the status instead of the buttons.
   - `location`: the pin saved for *this* order, or `null` if none yet.
   - `previousLocation`: the pin this customer (matched by phone number) saved on an earlier order, to prefill the map. Only sent while the order is `confirmed` and has no `location` yet; otherwise `null`.
+  - `canChangeToReady`: `true` when the customer said "Not now" today and can still change to ready ("Actually, I'm ready").
 - `404` → `{ "error": "Order not found" }`
 
 ## `POST /orders/:customerToken/confirm`
 
-Public, with no auth. The customer's one-time answer.
+Public, with no auth. The customer's answer. It's final, with one exception: a customer who said "Not now" can send `{ "ready": true }` later the **same day** (Nigeria time) to confirm after all. Confirmed never goes back to not ready.
 
 **Body:** `{ "ready": true }` or `{ "ready": false }` (it must be a boolean)
 
@@ -105,6 +155,7 @@ Public, with no auth. The customer's one-time answer.
 - `404` → `{ "error": "Order not found" }`
 - `409`: already answered, and the answer isn't overwritten:
   `{ "error": "You've already confirmed you're ready for this delivery.", "status": "confirmed" }`
+  A "Not now" order from an earlier day gets `"This delivery was for an earlier day. Please contact the business to arrange a new one."`
 
 ---
 
@@ -127,3 +178,39 @@ Public, with no auth. The customer's pin and landmark note (MVP feature 3). Can 
   - `pending_confirmation` → `"Confirm you're ready before sharing your location."`
   - `not_ready` → `"You told us you're not ready for this delivery."`
   - `dispatched` / `delivered` / `failed` → `"The rider already has your location for this delivery, so it can't be changed."`
+
+---
+
+## `GET /rider/:riderToken`
+
+Public, with no auth. Everything the rider needs in one place (MVP feature 4). Only exists once the customer's pin is saved.
+
+- `200`:
+  ```json
+  {
+    "orderNumber": 36,
+    "customerName": "Amaka Obi",
+    "customerPhone": "0803 123 4567",
+    "itemDescription": "2 trays of jollof rice",
+    "location": { "lat": 6.6018, "lng": 3.3515, "landmarkNote": "Blue gate, opposite the pharmacy" },
+    "status": "dispatched",
+    "failureReason": null,
+    "riderName": "Tunde Bakare",
+    "vendorName": null
+  }
+  ```
+- `404` → `{ "error": "Delivery not found" }`
+
+## `POST /rider/:riderToken/outcome`
+
+Public, with no auth. The rider marks the delivery, once, while it's `dispatched`.
+
+**Body:** `{ "outcome": "delivered" }` or `{ "outcome": "failed", "reason": "address_not_found" }` (reasons listed under Order statuses).
+
+- `200` → `{ "status": "delivered", "failureReason": null }` or `{ "status": "failed", "failureReason": "address_not_found" }`
+- `400` → `{ "error": "...", "fields": ["outcome"] }` (or `["reason"]` for a failed outcome without a valid reason)
+- `404` → `{ "error": "Delivery not found" }`
+- `409` → `{ "error": "...", "status": "<current status>" }`:
+  - `confirmed` → `"This delivery hasn't been dispatched yet."`
+  - `delivered` → `"This delivery is already marked as delivered."`
+  - `failed` → `"This delivery is already marked as failed."`

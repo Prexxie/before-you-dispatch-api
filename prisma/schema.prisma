@@ -19,6 +19,15 @@ enum OrderStatus {
   failed
 }
 
+// Preset reasons a rider can give for a failed delivery. Free-text notes
+// are deferred (CLAUDE.md).
+enum FailureReason {
+  customer_not_ready
+  address_not_found
+  customer_unreachable
+  other
+}
+
 enum Vehicle {
   bike
   car
@@ -56,6 +65,14 @@ model Order {
   lng             Float?
   landmarkNote    String?
   locationSavedAt DateTime?
+
+  // Token for the rider's link (MVP feature 4), random like customerToken.
+  // The API only hands it out once the customer's pin is saved.
+  riderToken String @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  dispatchedAt  DateTime? // when the vendor sent the rider link
+  completedAt   DateTime? // when the rider marked delivered or failed
+  failureReason FailureReason?
 
   @@index([riderId])
 }

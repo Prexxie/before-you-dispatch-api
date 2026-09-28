@@ -81,6 +81,7 @@
                   "pm.test('has a customerToken', () => pm.expect(order.customerToken).to.be.a('string'));",
                   "pm.test('has an orderNumber', () => pm.expect(order.orderNumber).to.be.a('number'));",
                   "pm.collectionVariables.set('customerToken', order.customerToken);",
+                  "pm.collectionVariables.set('orderId', order.id);",
                   "console.log('customerToken saved:', order.customerToken);"
                 ]
               }
@@ -414,7 +415,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('201 Created', () => pm.response.to.have.status(201));",
-                  "pm.collectionVariables.set('notReadyToken', pm.response.json().customerToken);"
+                  "pm.collectionVariables.set('notReadyToken', pm.response.json().customerToken);",
+                  "pm.collectionVariables.set('notReadyOrderId', pm.response.json().id);"
                 ]
               }
             }
@@ -476,6 +478,139 @@
           }
         },
         {
+          "name": "Vendor view of a \"Not now\" order: no rider link",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, not_ready, riderToken hidden until a pin exists', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.status).to.eql('not_ready');",
+                  "  pm.expect(body.riderToken).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{baseUrl}}/orders/{{notReadyOrderId}}" }
+        },
+        {
+          "name": "Dispatch a \"Not now\" order (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409, the rider is never sent to a customer who isn\\'t ready', () => {",
+                  "  pm.response.to.have.status(409);",
+                  "  pm.expect(pm.response.json().status).to.eql('not_ready');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{notReadyOrderId}}/dispatch" }
+        },
+        {
+          "name": "Get confirmation details (can still change to ready today)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('canChangeToReady is true on the same day', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().canChangeToReady).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{baseUrl}}/orders/{{notReadyToken}}/confirm" }
+        },
+        {
+          "name": "Customer taps \"Actually, I'm ready\" (undo Not now)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 confirmed', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().status).to.eql('confirmed');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/orders/{{notReadyToken}}/confirm",
+            "body": { "mode": "raw", "raw": "{\n  \"ready\": true\n}" }
+          }
+        },
+        {
+          "name": "Change back to \"Not now\" (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409, confirmed can\\'t go back to not ready', () => {",
+                  "  pm.response.to.have.status(409);",
+                  "  pm.expect(pm.response.json().status).to.eql('confirmed');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/orders/{{notReadyToken}}/confirm",
+            "body": { "mode": "raw", "raw": "{\n  \"ready\": false\n}" }
+          }
+        },
+        {
+          "name": "Dispatch before the pin is saved (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409, no rider without a pin', () => {",
+                  "  pm.response.to.have.status(409);",
+                  "  pm.expect(pm.response.json().status).to.eql('confirmed');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{notReadyOrderId}}/dispatch" }
+        },
+        {
+          "name": "Unknown rider token (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('404', () => pm.response.to.have.status(404));"]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{baseUrl}}/rider/00000000-0000-4000-8000-000000000000" }
+        },
+        {
           "name": "Unknown token (404)",
           "event": [
             {
@@ -505,6 +640,226 @@
             "url": "{{baseUrl}}/orders/not-a-token/location",
             "body": { "mode": "raw", "raw": "{\n  \"lat\": 6.6,\n  \"lng\": 3.35,\n  \"landmarkNote\": \"Gate\"\n}" }
           }
+        }
+      ]
+    },
+    {
+      "name": "5. Rider handoff (dispatch + outcome)",
+      "description": "Run folders 1 and 2 first, so orderId is a confirmed order with a saved pin.",
+      "item": [
+        {
+          "name": "Vendor view of the order (rider link ready)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('200, confirmed, pin saved, riderToken present', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(body.status).to.eql('confirmed');",
+                  "  pm.expect(body.location).to.be.an('object');",
+                  "  pm.expect(body.riderToken).to.be.a('string');",
+                  "  pm.expect(body.rider.name).to.be.a('string');",
+                  "});",
+                  "pm.collectionVariables.set('riderToken', body.riderToken);",
+                  "console.log('riderToken saved:', body.riderToken);"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{baseUrl}}/orders/{{orderId}}" }
+        },
+        {
+          "name": "Rider marks outcome before dispatch (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409, not dispatched yet', () => {",
+                  "  pm.response.to.have.status(409);",
+                  "  pm.expect(pm.response.json().status).to.eql('confirmed');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/rider/{{riderToken}}/outcome",
+            "body": { "mode": "raw", "raw": "{\n  \"outcome\": \"delivered\"\n}" }
+          }
+        },
+        {
+          "name": "Vendor sends the rider link (dispatch)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 dispatched with a time', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.status).to.eql('dispatched');",
+                  "  pm.expect(body.dispatchedAt).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{orderId}}/dispatch" }
+        },
+        {
+          "name": "Send the rider link again (still 200)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('200, resending is fine', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ],
+          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{orderId}}/dispatch" }
+        },
+        {
+          "name": "Customer changes pin after dispatch (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409, the pin is locked once the rider is sent', () => {",
+                  "  pm.response.to.have.status(409);",
+                  "  pm.expect(pm.response.json().status).to.eql('dispatched');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/orders/{{customerToken}}/location",
+            "body": { "mode": "raw", "raw": "{\n  \"lat\": 6.7,\n  \"lng\": 3.4,\n  \"landmarkNote\": \"Moved\"\n}" }
+          }
+        },
+        {
+          "name": "Rider's delivery details",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 with customer, item, pin and note', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.status).to.eql('dispatched');",
+                  "  pm.expect(body.customerName).to.eql('Amaka Obi');",
+                  "  pm.expect(body.location.landmarkNote).to.include('2nd floor');",
+                  "  pm.expect(body.orderNumber).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{baseUrl}}/rider/{{riderToken}}" }
+        },
+        {
+          "name": "Mark failed without a valid reason (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 naming reason', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().fields).to.eql(['reason']);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/rider/{{riderToken}}/outcome",
+            "body": { "mode": "raw", "raw": "{\n  \"outcome\": \"failed\",\n  \"reason\": \"traffic\"\n}" }
+          }
+        },
+        {
+          "name": "Rider marks delivered",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 delivered', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().status).to.eql('delivered');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/rider/{{riderToken}}/outcome",
+            "body": { "mode": "raw", "raw": "{\n  \"outcome\": \"delivered\"\n}" }
+          }
+        },
+        {
+          "name": "Mark it again as failed (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409, the outcome is final', () => {",
+                  "  pm.response.to.have.status(409);",
+                  "  pm.expect(pm.response.json().status).to.eql('delivered');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{baseUrl}}/rider/{{riderToken}}/outcome",
+            "body": { "mode": "raw", "raw": "{\n  \"outcome\": \"failed\",\n  \"reason\": \"address_not_found\"\n}" }
+          }
+        },
+        {
+          "name": "Vendor view shows delivered",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('delivered with a completion time', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.status).to.eql('delivered');",
+                  "  pm.expect(body.completedAt).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": { "method": "GET", "url": "{{baseUrl}}/orders/{{orderId}}" }
         }
       ]
     }
