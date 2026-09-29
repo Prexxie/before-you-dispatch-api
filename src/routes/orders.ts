@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { isValidPhone } from "../lib/phone";
@@ -193,8 +194,56 @@ function findVendorOrder(id: string, vendorId: string) {
   if (!ORDER_ID_PATTERN.test(id)) return null;
   return prisma.order.findFirst({
     where: { id, vendorId },
-    include: { rider: true, vendor: true },
+    include: {
+      rider: true,
+      vendor: true,
+      attempts: { include: { rider: true }, orderBy: { attemptNumber: "asc" } },
+    },
   });
+}
+
+// The rider for the next attempt: the same one unless the vendor picks
+// another, who must be one of theirs and still active (same rule as creating
+// an order). Returns the rider id, or null if the pick isn't valid.
+async function nextRiderId(
+  vendorId: string,
+  currentRiderId: string,
+  requested: unknown,
+): Promise<string | null> {
+  if (requested === undefined || requested === null || requested === "") {
+    return currentRiderId;
+  }
+  if (typeof requested !== "string") return null;
+  const rider = await prisma.rider.findUnique({ where: { id: requested } });
+  return rider && rider.vendorId === vendorId && rider.active ? rider.id : null;
+}
+
+// What resets when an order goes back to "awaiting confirmation" with a new
+// link: the old customer and rider links stop working (new tokens), and every
+// step of the previous attempt is cleared. The customer's pin on the order is
+// cleared too, so they re-confirm it; their remembered pin still preloads.
+function freshStart(riderId: string) {
+  return {
+    status: "pending_confirmation" as const,
+    riderId,
+    customerToken: randomUUID(),
+    riderToken: randomUUID(),
+    confirmedAt: null,
+    notReadyAt: null,
+    dispatchedAt: null,
+    pickedUpAt: null,
+    arrivedAt: null,
+    receivedAt: null,
+    completedAt: null,
+    failureReason: null,
+    deliveryConfirmedBy: null,
+    lat: null,
+    lng: null,
+    landmarkNote: null,
+    locationAddress: null,
+    locationSavedAt: null,
+    retriggeredAt: null,
+  };
 }
 
 // GET /orders/:id — one order as the vendor sees it (full details, rider,
@@ -279,6 +328,101 @@ router.post("/:id/delivered", requireVendor, async (req, res) => {
         current.status === "delivered" || current.status === "failed"
           ? "This delivery is already finished."
           : "Only a dispatched order can be marked delivered.",
+      status: current.status,
+    });
+    return;
+  }
+  res.json(vendorOrderView(current));
+});
+
+// POST /orders/:id/retrigger — body { riderId? }. For an order the customer
+// declined ("Not now" + confirmed the warning): issues a NEW customer link
+// and puts the order back to awaiting confirmation for a fresh start. The
+// vendor sends the new link (customerToken in the response); the old one
+// stays closed. The vendor decides the delivery is going out today.
+router.post("/:id/retrigger", requireVendor, async (req, res) => {
+  const order = await findVendorOrder(req.params.id as string, req.vendorId);
+  if (!order) {
+    res.status(404).json({ error: "Order not found" });
+    return;
+  }
+  const riderId = await nextRiderId(req.vendorId, order.riderId, req.body?.riderId);
+  if (!riderId) {
+    res.status(400).json({ error: "riderId does not match any rider", fields: ["riderId"] });
+    return;
+  }
+
+  const { count } = await prisma.order.updateMany({
+    where: { id: order.id, status: "not_ready" },
+    data: { ...freshStart(riderId), retriggeredAt: new Date() },
+  });
+  const current = await findVendorOrder(order.id, req.vendorId);
+  if (!current) {
+    res.status(404).json({ error: "Order not found" });
+    return;
+  }
+  if (count === 0) {
+    res.status(409).json({
+      error: "Only an order the customer declined can be retriggered.",
+      status: current.status,
+    });
+    return;
+  }
+  res.json(vendorOrderView(current));
+});
+
+// POST /orders/:id/redeliver — body { riderId? }. For an order the rider
+// marked failed: keeps that attempt in the order's history, then resets the
+// order for another go with NEW customer and rider links. The customer has to
+// confirm they're ready again (a failed trip is often about that), but their
+// remembered pin and address preload. Vendor-triggered, not a customer
+// reschedule link (CLAUDE.md defers those).
+router.post("/:id/redeliver", requireVendor, async (req, res) => {
+  const order = await findVendorOrder(req.params.id as string, req.vendorId);
+  if (!order) {
+    res.status(404).json({ error: "Order not found" });
+    return;
+  }
+  const riderId = await nextRiderId(req.vendorId, order.riderId, req.body?.riderId);
+  if (!riderId) {
+    res.status(400).json({ error: "riderId does not match any rider", fields: ["riderId"] });
+    return;
+  }
+
+  const redelivered = await prisma.$transaction(async (tx) => {
+    // Conditional on status so two taps can't both record the attempt.
+    const { count } = await tx.order.updateMany({
+      where: { id: order.id, status: "failed" },
+      data: { ...freshStart(riderId), attempt: { increment: 1 } },
+    });
+    if (count === 0) return false;
+    await tx.orderAttempt.create({
+      data: {
+        orderId: order.id,
+        attemptNumber: order.attempt,
+        riderId: order.riderId,
+        failureReason: order.failureReason,
+        dispatchedAt: order.dispatchedAt,
+        pickedUpAt: order.pickedUpAt,
+        arrivedAt: order.arrivedAt,
+        failedAt: order.completedAt,
+        lat: order.lat,
+        lng: order.lng,
+        landmarkNote: order.landmarkNote,
+        address: order.locationAddress,
+      },
+    });
+    return true;
+  });
+
+  const current = await findVendorOrder(order.id, req.vendorId);
+  if (!current) {
+    res.status(404).json({ error: "Order not found" });
+    return;
+  }
+  if (!redelivered) {
+    res.status(409).json({
+      error: "Only an order the rider marked as failed can be redelivered.",
       status: current.status,
     });
     return;

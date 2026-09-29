@@ -107,6 +107,7 @@ model Rider {
   vendorId String
   vendor   Vendor   @relation(fields: [vendorId], references: [id])
   orders   Order[]
+  attempts OrderAttempt[]
 
   @@index([vendorId])
 }
@@ -138,6 +139,10 @@ model Order {
   lat             Float?
   lng             Float?
   landmarkNote    String?
+  // The street address the customer confirmed alongside the pin (e.g.
+  // "5, Temidire Street, Mafoluku, Oshodi, Lagos"). Optional; the pin stays
+  // what the rider navigates to, this is what they read.
+  locationAddress String?
   locationSavedAt DateTime?
 
   // Token for the rider's link (MVP feature 4), random like customerToken.
@@ -156,8 +161,40 @@ model Order {
   failureReason       FailureReason?
   deliveryConfirmedBy DeliveryConfirmer?
 
+  // Which delivery attempt this is (1 = first). Goes up each time the vendor
+  // redelivers a failed order; earlier failed attempts are kept in `attempts`.
+  attempt  Int            @default(1)
+  attempts OrderAttempt[]
+  // Set when the vendor retriggers an order the customer declined, so the
+  // follow-up message can acknowledge the earlier "Not now". Null otherwise.
+  retriggeredAt DateTime?
+
   @@index([riderId])
   @@index([vendorId])
+}
+
+// A failed delivery attempt, kept when the vendor redelivers the order (the
+// order itself is reset for the next attempt). Read-only history.
+model OrderAttempt {
+  id            String         @id @default(cuid())
+  orderId       String
+  order         Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  attemptNumber Int
+  riderId       String
+  rider         Rider          @relation(fields: [riderId], references: [id])
+  failureReason FailureReason?
+  dispatchedAt  DateTime?
+  pickedUpAt    DateTime?
+  arrivedAt     DateTime?
+  failedAt      DateTime?
+  // Where the customer had asked to be found on that attempt.
+  lat           Float?
+  lng           Float?
+  landmarkNote  String?
+  address       String?
+  createdAt     DateTime       @default(now())
+
+  @@index([orderId])
 }
 
 // The last pin a customer shared, so it loads automatically on their next
@@ -171,6 +208,7 @@ model SavedLocation {
   lat          Float
   lng          Float
   landmarkNote String
+  address      String?
   updatedAt    DateTime @updatedAt
 
   @@id([vendorId, phoneKey])

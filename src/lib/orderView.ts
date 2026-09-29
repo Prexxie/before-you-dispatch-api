@@ -1,17 +1,29 @@
-import { Order, Rider, Vendor } from "../generated/prisma/client";
+import { Order, OrderAttempt, Rider, Vendor } from "../generated/prisma/client";
 import { vendorDetails } from "../config/env";
 
 export function orderLocation(order: Order) {
   if (order.lat == null || order.lng == null || order.landmarkNote == null) {
     return null;
   }
-  return { lat: order.lat, lng: order.lng, landmarkNote: order.landmarkNote };
+  return {
+    lat: order.lat,
+    lng: order.lng,
+    landmarkNote: order.landmarkNote,
+    address: order.locationAddress,
+  };
 }
 
 // What the vendor sees for one order. The rider's token only appears once
 // the customer's pin is saved: no rider link before the customer is ready
 // and has said where to find them.
-export function vendorOrderView(order: Order & { rider: Rider; vendor: Vendor }) {
+type OrderForVendor = Order & {
+  rider: Rider;
+  vendor: Vendor;
+  // Earlier failed attempts, oldest first. Only loaded for the single-order view.
+  attempts?: (OrderAttempt & { rider: Rider })[];
+};
+
+export function vendorOrderView(order: OrderForVendor) {
   const location = orderLocation(order);
   return {
     id: order.id,
@@ -20,6 +32,24 @@ export function vendorOrderView(order: Order & { rider: Rider; vendor: Vendor })
     customerPhone: order.customerPhone,
     itemDescription: order.itemDescription,
     status: order.status,
+    // 1 for the first delivery attempt; goes up each time a failed order is
+    // redelivered.
+    attempt: order.attempt,
+    // When the vendor retriggered a declined order (null if never).
+    retriggeredAt: order.retriggeredAt,
+    attempts: (order.attempts ?? []).map((a) => ({
+      attemptNumber: a.attemptNumber,
+      riderName: a.rider.name,
+      failureReason: a.failureReason,
+      dispatchedAt: a.dispatchedAt,
+      pickedUpAt: a.pickedUpAt,
+      arrivedAt: a.arrivedAt,
+      failedAt: a.failedAt,
+      location:
+        a.lat != null && a.lng != null && a.landmarkNote != null
+          ? { lat: a.lat, lng: a.lng, landmarkNote: a.landmarkNote, address: a.address }
+          : null,
+    })),
     createdAt: order.createdAt,
     updatedAt: order.updatedAt,
     customerToken: order.customerToken,

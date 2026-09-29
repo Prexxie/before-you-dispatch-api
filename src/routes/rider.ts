@@ -147,6 +147,72 @@ router.post("/:token/arrived", async (req, res) => {
   res.json({ arrivedAt: current.arrivedAt });
 });
 
+// POST /rider/:token/undo-arrived — the rider tapped "I've arrived" by
+// mistake. Clears it, unless the customer has already confirmed receipt or the
+// delivery is finished. Harmless if it isn't set.
+router.post("/:token/undo-arrived", async (req, res) => {
+  const order = await findJob(req.params.token);
+  if (!order) {
+    res.status(404).json({ error: "Delivery not found" });
+    return;
+  }
+  await prisma.order.updateMany({
+    where: { id: order.id, status: "dispatched", arrivedAt: { not: null }, receivedAt: null },
+    data: { arrivedAt: null },
+  });
+  const current = await prisma.order.findUnique({ where: { id: order.id } });
+  if (!current) {
+    res.status(404).json({ error: "Delivery not found" });
+    return;
+  }
+  if (current.arrivedAt !== null) {
+    res.status(409).json({
+      error: "This can't be undone now: the customer has confirmed receipt, or the delivery is finished.",
+      status: current.status,
+    });
+    return;
+  }
+  res.json({ arrivedAt: null });
+});
+
+// POST /rider/:token/undo-pickup — the rider tapped "picked up" by mistake.
+// Clears it, which locks the customer's pin again (it's withheld until
+// pickup). Not once they've marked arrival (undo that first), the customer has
+// confirmed receipt, or the delivery is finished. Harmless if it isn't set.
+router.post("/:token/undo-pickup", async (req, res) => {
+  const order = await findJob(req.params.token);
+  if (!order) {
+    res.status(404).json({ error: "Delivery not found" });
+    return;
+  }
+  await prisma.order.updateMany({
+    where: {
+      id: order.id,
+      status: "dispatched",
+      pickedUpAt: { not: null },
+      arrivedAt: null,
+      receivedAt: null,
+    },
+    data: { pickedUpAt: null },
+  });
+  const current = await prisma.order.findUnique({ where: { id: order.id } });
+  if (!current) {
+    res.status(404).json({ error: "Delivery not found" });
+    return;
+  }
+  if (current.pickedUpAt !== null) {
+    res.status(409).json({
+      error:
+        current.arrivedAt !== null
+          ? "Undo \"I've arrived\" first."
+          : "This can't be undone now: the customer has confirmed receipt, or the delivery is finished.",
+      status: current.status,
+    });
+    return;
+  }
+  res.json({ pickedUpAt: null });
+});
+
 // POST /rider/:token/outcome — { outcome: "delivered" } or
 // { outcome: "failed", reason: <FailureReason> }. Once only, while dispatched.
 // Delivered (completed) needs the customer's "I've received my delivery"

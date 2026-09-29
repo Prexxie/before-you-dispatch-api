@@ -8,10 +8,12 @@ Errors always come back as JSON with an `error` string, and `fields` when specif
 
 ```
 pending_confirmation ─┬─> confirmed ──(pin saved, vendor sends rider link)──> dispatched ──(rider picks up)──> dispatched + pickedUpAt ──(rider: "I've arrived")──> + arrivedAt ─┬─(customer: "I've received it")─> + receivedAt ──(rider completes)──> delivered
-                      └─> not_ready ──(same day only)──> confirmed                                                                                                             ├─(vendor override)──────────────────────────────────────────> delivered
+                      └─> not_ready (final; vendor "retrigger" -> pending_confirmation, new link)                                                                                        ├─(vendor override)──────────────────────────────────────────> delivered
                                                                                                                                                                                  └─(rider, before receipt)─> failed (+ failureReason)
 ```
 
+- `not_ready` means the customer chose "Not now" **and** confirmed the warning: it's final for that link (the link is closed). The vendor can `POST /orders/:id/retrigger` to issue a new link and start fresh.
+- A `failed` order can be redelivered by the vendor (`POST /orders/:id/redeliver`): the failed attempt is kept in the order's history (`attempts`), `attempt` goes up, and the order returns to `pending_confirmation` with new customer and rider links, so the customer confirms again. Both actions are vendor-triggered; there is no customer-facing reschedule link (deferred in CLAUDE.md).
 - An order is only dispatched once it's `confirmed` **and** has a saved pin (the confirm-before-dispatch rule).
 - Every transition has its own timestamp, so the full timeline can be shown without guessing from `status` alone: `confirmedAt`, `notReadyAt`, `locationSavedAt`, `dispatchedAt`, `pickedUpAt`, `arrivedAt`, `receivedAt`, `completedAt`.
 - Picking up is a rider-only step, separate from dispatch: the rider's pin and landmark note (`GET /rider/:riderToken`) are withheld until `pickedUpAt` is set, not just hidden in the UI. It's informational for sequencing, not a hard gate on the outcome endpoint — a rider who forgets to tap "picked up" can still mark the delivery completed or failed.
@@ -295,7 +297,7 @@ One order as the vendor sees it (vendor side; `id` is the order's `id`, never a 
   "createdAt": "2026-09-28T10:38:16.242Z",
   "customerToken": "bb32509d-7776-4518-94f6-6e8538888139",
   "rider": { "id": "seed-rider-1", "name": "Tunde Bakare", "phone": "+2348012345678", "vehicle": "bike" },
-  "location": { "lat": 6.6018, "lng": 3.3515, "landmarkNote": "Blue gate, opposite the pharmacy" },
+  "location": { "lat": 6.6018, "lng": 3.3515, "landmarkNote": "Blue gate, opposite the pharmacy", "address": "5, Temidire Street, Mafoluku, Oshodi, Lagos" },
   "riderToken": "5f0c3c2e-8f1d-4d7a-9a55-0b3f1f6f2c11",
   "dispatchedAt": null,
   "completedAt": null,
@@ -334,19 +336,20 @@ Public, with no auth. Gives the customer page what it needs to ask "you have a d
     "status": "confirmed",
     "awaitingResponse": false,
     "location": null,
-    "previousLocation": { "lat": 6.6021, "lng": 3.3519, "landmarkNote": "Blue gate, opposite the pharmacy" }
+    "previousLocation": { "lat": 6.6021, "lng": 3.3519, "landmarkNote": "Blue gate, opposite the pharmacy", "address": "5, Temidire Street, Mafoluku, Oshodi, Lagos" }
   }
   ```
   - `vendorName`: the business the delivery is from (the logged-in vendor's `businessName` — always set, since it's required at sign up).
   - `awaitingResponse`: when `false`, the customer has already answered; show the status instead of the buttons.
   - `location`: the pin saved for *this* order, or `null` if none yet.
   - `previousLocation`: the pin this customer (matched by phone number) saved on an earlier order, to prefill the map. Only sent while the order is `confirmed` and has no `location` yet; otherwise `null`.
-  - `canChangeToReady`: `true` when the customer said "Not now" today and can still change to ready ("Actually, I'm ready").
+  - `redelivery`: `null` for a first delivery. After the vendor redelivers a failed order it is `{ "attempt": 2, "failureReason": "address_not_found" | "customer_not_ready" | "customer_unreachable" | "other" | null }` (the reason the previous attempt failed), so the page can say "let's try again" and ask the customer to confirm their location.
+  - When `status` is `not_ready` the customer declined and the link is closed: show "This link is no longer active". (`canChangeToReady` was removed 1 Oct.)
 - `404` → `{ "error": "Order not found" }`
 
 ## `POST /orders/:customerToken/confirm`
 
-Public, with no auth. The customer's answer. It's final, with one exception: a customer who said "Not now" can send `{ "ready": true }` later the **same day** (Nigeria time) to confirm after all. Confirmed never goes back to not ready.
+Public, with no auth. The customer's answer. It's final: `{ "ready": false }` closes the link for good (the page shows a warning first, so this is deliberate), and `{ "ready": true }` afterwards is refused. Once the customer is `confirmed`, `{ "ready": false }` is still accepted until the rider is sent (they went back a step and changed their mind); after that it's refused. To start again the vendor retriggers the order, which issues a new link.
 
 **Body:** `{ "ready": true }` or `{ "ready": false }` (it must be a boolean)
 
@@ -356,23 +359,23 @@ Public, with no auth. The customer's answer. It's final, with one exception: a c
 - `404` → `{ "error": "Order not found" }`
 - `409`: already answered, and the answer isn't overwritten:
   `{ "error": "You've already confirmed you're ready for this delivery.", "status": "confirmed" }`
-  A "Not now" order from an earlier day gets `"This delivery was for an earlier day. Please contact the business to arrange a new one."`
+  A declined order gets `"This link is no longer active. If you change your mind, contact the business and they can send you a new one."`
 
 ---
 
 ## `POST /orders/:customerToken/location`
 
-Public, with no auth. The customer's pin and landmark note (MVP feature 3). Can be sent again to correct the pin while the order is `confirmed`; it locks once the order is dispatched. Each save is also remembered for the customer's next order (see `previousLocation` above).
+Public, with no auth. The customer's pin and landmark note (MVP feature 3), plus an optional `address` (text, max 200 characters; blank or omitted is stored as `null`) that the rider reads next to the pin. Can be sent again to correct the pin while the order is `confirmed`; it locks once the order is dispatched. Each save is also remembered for the customer's next order (see `previousLocation` above).
 
 **Body**
 
 ```json
-{ "lat": 6.6018, "lng": 3.3515, "landmarkNote": "Blue gate, opposite the pharmacy" }
+{ "lat": 6.6018, "lng": 3.3515, "landmarkNote": "Blue gate, opposite the pharmacy", "address": "5, Temidire Street, Mafoluku, Oshodi, Lagos" }
 ```
 
 `lat` is a number from -90 to 90, `lng` a number from -180 to 180, `landmarkNote` a string of 1 to 200 characters (surrounding whitespace is trimmed).
 
-- `200` → `{ "location": { "lat": 6.6018, "lng": 3.3515, "landmarkNote": "Blue gate, opposite the pharmacy" }, "savedAt": "2026-09-28T07:58:35.415Z" }`
+- `200` → `{ "location": { "lat": 6.6018, "lng": 3.3515, "landmarkNote": "Blue gate, opposite the pharmacy", "address": "5, Temidire Street, Mafoluku, Oshodi, Lagos" }, "savedAt": "2026-09-28T07:58:35.415Z" }`
 - `400` → `{ "error": "Send lat (-90 to 90), lng (-180 to 180) and a landmarkNote of 1 to 200 characters", "fields": ["lat"] }`
 - `404` → `{ "error": "Order not found" }`
 - `409`: the order isn't `confirmed`. The body carries the current `status`:
@@ -414,7 +417,7 @@ Public, with no auth. Everything the rider needs in one place (MVP feature 4). O
 
 Public, with no auth. The rider confirms they've collected the order from the vendor. Unlocks `location` on `GET /rider/:riderToken`. No body. Tapping again is harmless.
 
-- `200` → `{ "pickedUpAt": "2026-09-29T13:15:00.000Z", "location": { "lat": 6.6018, "lng": 3.3515, "landmarkNote": "..." } }`
+- `200` → `{ "pickedUpAt": "2026-09-29T13:15:00.000Z", "location": { "lat": 6.6018, "lng": 3.3515, "landmarkNote": "...", "address": "..." } }`
 - `404` → `{ "error": "Delivery not found" }`
 - `409` → `{ "error": "...", "status": "<current status>" }`:
   - `confirmed` → `"This delivery hasn't been dispatched yet."`
@@ -479,3 +482,35 @@ The vendor marks a `dispatched` order delivered when the customer can't confirm 
 - `200` → the order, as in `GET /orders/:id`
 - `404` → `{ "error": "Order not found" }`
 - `409` → `{ "error": "This delivery is already finished." | "Only a dispatched order can be marked delivered.", "status": "<current status>" }`
+
+## `POST /orders/:id/retrigger`
+
+Vendor only. For an order the customer declined (`not_ready`): issues a **new** `customerToken` (the old link stays closed) and puts the order back to `pending_confirmation`, clearing `notReadyAt`. The vendor then sends the new link. The vendor is deciding the delivery is going out today.
+
+**Body (optional):** `{ "riderId": "<id>" }` to change the rider; omit to keep the same one. Must be one of the vendor's active riders.
+
+- `200` → the order, as in `GET /orders/:id` (read `customerToken` for the new link)
+- `400` → `{ "error": "riderId does not match any rider", "fields": ["riderId"] }`
+- `404` → `{ "error": "Order not found" }`
+- `409` → `{ "error": "Only an order the customer declined can be retriggered.", "status": "<current status>" }`
+
+## `POST /orders/:id/redeliver`
+
+Vendor only. For an order the rider marked `failed`. Saves that attempt into the order's history, then resets the order for another attempt: `status` is `pending_confirmation`, `attempt` goes up by one, `customerToken` and `riderToken` are new (old links stop working), every step's timestamp and `failureReason` are cleared, and the order's pin is cleared so the customer re-confirms it (their remembered pin and address still preload on their page, "Same spot as last time?").
+
+**Body (optional):** `{ "riderId": "<id>" }`, as for retrigger.
+
+- `200` → the order, as in `GET /orders/:id`
+- `400`, `404` as above
+- `409` → `{ "error": "Only an order the rider marked as failed can be redelivered.", "status": "<current status>" }`
+
+`GET /orders/:id` now also returns `retriggeredAt` (when the vendor retriggered a declined order, else `null`; the page uses it to word the follow-up message) and `attempt` (1 for the first try) and `attempts`: earlier failed attempts, oldest first, each `{ attemptNumber, riderName, failureReason, dispatchedAt, pickedUpAt, arrivedAt, failedAt, location: { lat, lng, landmarkNote, address } | null }`.
+
+## `POST /rider/:riderToken/undo-arrived` and `POST /rider/:riderToken/undo-pickup`
+
+Public, with no auth. For a rider who tapped "I've arrived" or "I've picked up" by mistake. No body.
+
+- `undo-arrived`: clears `arrivedAt`. Refused once the customer has confirmed receipt or the delivery is finished. `200` → `{ "arrivedAt": null }`.
+- `undo-pickup`: clears `pickedUpAt`, so the customer's pin is withheld again (`location` is `null` on `GET /rider/:riderToken`). Refused while `arrivedAt` is set (undo the arrival first), after receipt, or when finished. `200` → `{ "pickedUpAt": null }`.
+- Both are harmless if the step isn't set. `404` → `{ "error": "Delivery not found" }`. `409` → `{ "error": "...", "status": "<current status>" }`.
+
