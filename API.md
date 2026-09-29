@@ -123,7 +123,7 @@ The "Edit Profile" form, plus the "Workspace theme" swatch picker (design: "Vend
 
 `businessPhone` and `logoDataUrl` clear to `null` when sent as an empty string. `businessName`, `businessAddress` and `ownerName` can't be cleared (`400` if sent empty); `category` and `themeColor` must be one of the valid values if sent; `logoDataUrl` follows the same rules as at sign up.
 
-`themeColor` is one of `green` (the default — literally "no override": the app's own green/crimson look, unchanged), `crimson`, `navy`, `amber`, `purple`. A non-`green` value re-tints the vendor's own dashboard chrome (primary buttons, the sidebar, borders, highlighted stats and badges) to that one color — purely cosmetic, never sent to or seen by customers or riders, and the "Before You Dispatch" brand mark itself never changes.
+`themeColor` is one of `green` (the default — literally "no override": the app's own green/crimson look, unchanged), `crimson`, `navy`, `amber`, `purple`. A non-`green` value re-tints the vendor's own dashboard chrome (primary buttons, the sidebar, borders, highlighted stats and badges) to that one color — purely cosmetic, never sent to or seen by customers or riders, and the "WakaRoute" brand mark itself never changes.
 
 - `200`: the updated vendor (same shape as signup).
 - `400` `{ "error": "...", "fields": [...] }` — including `{ "error": "Nothing to update", "fields": [] }` for an empty body.

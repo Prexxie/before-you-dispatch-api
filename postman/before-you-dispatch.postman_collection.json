@@ -1,6 +1,6 @@
 {
   "info": {
-    "name": "Before You Dispatch API",
+    "name": "WakaRoute API",
     "description": "Requests for before-you-dispatch-api, in the order a delivery happens. Run a folder top to bottom (or use Run collection): 'Create order' saves customerToken into a collection variable, so later requests pick it up automatically. Each request has tests that check the response. Endpoint details: API.md.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },

@@ -2,7 +2,7 @@
   "name": "before-you-dispatch-api",
   "version": "0.1.0",
   "private": true,
-  "description": "Backend for Before You Dispatch: orders, statuses, link generation, messaging.",
+  "description": "Backend for WakaRoute: orders, statuses, link generation, messaging.",
   "main": "dist/index.js",
   "scripts": {
     "dev": "nodemon",

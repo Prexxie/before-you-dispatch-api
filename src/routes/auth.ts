@@ -394,7 +394,7 @@ router.post("/forgot-password", async (req, res) => {
       const link = `${env.webUrl}/vendor/reset-password?token=${token}`;
       await sendEmail({
         to: vendor.email,
-        subject: "Reset your Before You Dispatch password",
+        subject: "Reset your WakaRoute password",
         text: `Hi ${vendor.ownerName},\n\nUse this link to choose a new password. It works once and expires in an hour:\n\n${link}\n\nIf you didn't ask for this, you can ignore this email.`,
         html: `<p>Hi ${escapeHtml(vendor.ownerName)},</p><p>Use this link to choose a new password. It works once and expires in an hour:</p><p><a href="${link}">Reset my password</a></p><p>If you didn't ask for this, you can ignore this email.</p>`,
       });
