@@ -39,6 +39,7 @@ router.get("/:token", async (req, res) => {
     location: order.pickedUpAt ? orderLocation(order) : null,
     status: order.status,
     failureReason: order.failureReason,
+    failureNote: order.failureNote,
     riderName: order.rider.name,
     vendorName: order.vendor.businessName,
     // The pickup point.
@@ -213,18 +214,32 @@ router.post("/:token/undo-pickup", async (req, res) => {
   res.json({ pickedUpAt: null });
 });
 
+export const FAILURE_NOTE_MAX_LENGTH = 200;
+
 // POST /rider/:token/outcome — { outcome: "delivered" } or
-// { outcome: "failed", reason: <FailureReason> }. Once only, while dispatched.
+// { outcome: "failed", reason: <FailureReason>, note? }. `note` is the rider's
+// own words and is required (1 to 200 characters) when reason is "other";
+// ignored for the preset reasons. Once only, while dispatched.
 // Delivered (completed) needs the customer's "I've received my delivery"
 // first; failed is only possible before that (CLAUDE.md flow step 6).
 router.post("/:token/outcome", async (req, res) => {
-  const { outcome, reason } = req.body ?? {};
+  const { outcome, reason, note } = req.body ?? {};
   const delivered = outcome === "delivered";
   const failed = outcome === "failed" && FAILURE_REASONS.includes(reason);
   if (!delivered && !failed) {
     res.status(400).json({
       error: `Send { outcome: "delivered" } or { outcome: "failed", reason } with reason one of: ${FAILURE_REASONS.join(", ")}`,
       fields: outcome === "failed" ? ["reason"] : ["outcome"],
+    });
+    return;
+  }
+
+  const failureNote =
+    failed && reason === "other" && typeof note === "string" ? note.trim() : "";
+  if (failed && reason === "other" && (failureNote === "" || failureNote.length > FAILURE_NOTE_MAX_LENGTH)) {
+    res.status(400).json({
+      error: `Tell us what happened: a note of 1 to ${FAILURE_NOTE_MAX_LENGTH} characters is required when the reason is "other"`,
+      fields: ["note"],
     });
     return;
   }
@@ -247,6 +262,7 @@ router.post("/:token/outcome", async (req, res) => {
       status,
       completedAt: new Date(),
       failureReason: failed ? (reason as FailureReason) : null,
+      failureNote: failureNote || null,
     },
   });
 
@@ -270,7 +286,11 @@ router.post("/:token/outcome", async (req, res) => {
     return;
   }
 
-  res.json({ status, failureReason: failed ? reason : null });
+  res.json({
+    status,
+    failureReason: failed ? reason : null,
+    failureNote: failureNote || null,
+  });
 });
 
 export default router;

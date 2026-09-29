@@ -159,6 +159,9 @@ model Order {
   receivedAt          DateTime? // when the customer tapped "I've received my delivery"
   completedAt         DateTime? // when the delivery was completed or marked failed
   failureReason       FailureReason?
+  // The rider's own words when the reason is "other" (required then; null for
+  // the preset reasons).
+  failureNote         String?
   deliveryConfirmedBy DeliveryConfirmer?
 
   // Which delivery attempt this is (1 = first). Goes up each time the vendor
@@ -183,6 +186,7 @@ model OrderAttempt {
   riderId       String
   rider         Rider          @relation(fields: [riderId], references: [id])
   failureReason FailureReason?
+  failureNote   String?
   dispatchedAt  DateTime?
   pickedUpAt    DateTime?
   arrivedAt     DateTime?

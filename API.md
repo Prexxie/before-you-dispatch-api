@@ -438,10 +438,10 @@ Public, with no auth. The rider confirms they've reached the customer's location
 
 Public, with no auth. The rider marks the delivery, once, while it's `dispatched`.
 
-**Body:** `{ "outcome": "delivered" }` or `{ "outcome": "failed", "reason": "address_not_found" }` (reasons listed under Order statuses).
+**Body:** `{ "outcome": "delivered" }` or `{ "outcome": "failed", "reason": "address_not_found" }` (reasons listed under Order statuses). When the reason is `other`, add `"note"`: the rider's own words, 1 to 200 characters, **required** (e.g. `{ "outcome": "failed", "reason": "other", "note": "Motorbike broke down on Ikorodu Road" }`). `note` is ignored for the preset reasons. (The free-text note was on CLAUDE.md's deferred list; added 1 Oct 2026 at the user's request, and only for "other".)
 
-- `200` → `{ "status": "delivered", "failureReason": null }` or `{ "status": "failed", "failureReason": "address_not_found" }`
-- `400` → `{ "error": "...", "fields": ["outcome"] }` (or `["reason"]` for a failed outcome without a valid reason)
+- `200` → `{ "status": "delivered", "failureReason": null, "failureNote": null }` or `{ "status": "failed", "failureReason": "address_not_found", "failureNote": null }` (`failureNote` is set only for `other`)
+- `400` → `{ "error": "...", "fields": ["outcome"] }` (or `["reason"]` for a failed outcome without a valid reason, or `["note"]` for `other` without a note or with one over 200 characters)
 - `404` → `{ "error": "Delivery not found" }`
 - `409` → `{ "error": "...", "status": "<current status>" }`:
   - `confirmed` → `"This delivery hasn't been dispatched yet."`
@@ -513,4 +513,6 @@ Public, with no auth. For a rider who tapped "I've arrived" or "I've picked up" 
 - `undo-arrived`: clears `arrivedAt`. Refused once the customer has confirmed receipt or the delivery is finished. `200` → `{ "arrivedAt": null }`.
 - `undo-pickup`: clears `pickedUpAt`, so the customer's pin is withheld again (`location` is `null` on `GET /rider/:riderToken`). Refused while `arrivedAt` is set (undo the arrival first), after receipt, or when finished. `200` → `{ "pickedUpAt": null }`.
 - Both are harmless if the step isn't set. `404` → `{ "error": "Delivery not found" }`. `409` → `{ "error": "...", "status": "<current status>" }`.
+
+`failureNote` (the rider's text for reason `other`, else `null`) is returned wherever `failureReason` is: `GET /rider/:riderToken`, `GET /orders/:id` and, per attempt, in `attempts`. It is cleared when a failed order is redelivered (the old note stays on that attempt in `attempts`).
 

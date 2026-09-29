@@ -41,6 +41,7 @@ export function vendorOrderView(order: OrderForVendor) {
       attemptNumber: a.attemptNumber,
       riderName: a.rider.name,
       failureReason: a.failureReason,
+      failureNote: a.failureNote,
       dispatchedAt: a.dispatchedAt,
       pickedUpAt: a.pickedUpAt,
       arrivedAt: a.arrivedAt,
@@ -70,6 +71,7 @@ export function vendorOrderView(order: OrderForVendor) {
     receivedAt: order.receivedAt,
     completedAt: order.completedAt,
     failureReason: order.failureReason,
+    failureNote: order.failureNote,
     deliveryConfirmedBy: order.deliveryConfirmedBy,
     vendor: vendorDetails(order.vendor),
   };
