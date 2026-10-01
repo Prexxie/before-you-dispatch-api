@@ -1,0 +1,42 @@
+# Render Blueprint for the WakaRoute API (Render dashboard > New > Blueprint).
+# Secrets marked `sync: false` are typed into the dashboard when the
+# Blueprint is created; they are never stored in this file.
+services:
+  - type: web
+    name: wakaroute-api
+    runtime: node
+    # free sleeps after 15 min idle (first request then takes ~50 s); use
+    # starter (paid) for anything people will actually use, e.g. the demo.
+    plan: free
+    # Closest Render region to the Supabase database (eu-west-1).
+    region: frankfurt
+    branch: main
+    # --production=false: the build needs prisma and typescript, which are dev
+    # dependencies. Migrations run on every deploy (a no-op when up to date).
+    buildCommand: yarn install --frozen-lockfile --production=false && yarn build && yarn db:deploy
+    startCommand: yarn start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      # Supabase Session pooler string (port 5432), same format as .env.
+      - key: DATABASE_URL
+        sync: false
+      # Signs login sessions. Render generates a random one.
+      - key: JWT_SECRET
+        generateValue: true
+      # The web service's address, e.g. https://wakaroute-web.onrender.com
+      - key: CORS_ORIGIN
+        sync: false
+      - key: WEB_URL
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      # Brevo, for password-reset emails. Optional: without them the reset
+      # link only appears in the service logs.
+      - key: EMAIL_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
