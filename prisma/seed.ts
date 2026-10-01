@@ -1,14 +1,53 @@
 import { prisma } from "../src/lib/prisma";
+import { hashPassword } from "../src/lib/auth";
 
-// A sample rider so POST /orders has a riderId to assign during local dev.
-// There's no rider-management endpoint in the MVP yet.
+// A demo vendor account to log in with locally, plus sample riders so the
+// create order form has someone to assign. Riders get their own management
+// page in week 2. Safe to re-run.
+const DEMO_VENDOR = {
+  id: "demo-vendor-1",
+  businessName: "Precious Food Business",
+  businessAddress: "12 Allen Avenue, Ikeja",
+  businessPhone: "0803 214 7765",
+  ownerName: "Precious Adebayo",
+  category: "food_restaurant" as const,
+  email: "demo@beforeyoudispatch.test",
+  password: "ChangeMe123!",
+};
+
+const RIDERS = [
+  { id: "seed-rider-1", name: "Tunde Bakare", phone: "+2348012345678", vehicle: "bike" },
+  { id: "seed-rider-2", name: "Chidi Okafor", phone: "+2348120045521", vehicle: "car" },
+  { id: "seed-rider-3", name: "Ngozi Eze", phone: "+2349067713348", vehicle: "bike" },
+] as const;
+
 async function main() {
-  const rider = await prisma.rider.upsert({
-    where: { id: "seed-rider-1" },
-    update: {},
-    create: { id: "seed-rider-1", name: "Tunde Bakare", phone: "+2348012345678" },
+  const vendor = await prisma.vendor.upsert({
+    where: { id: DEMO_VENDOR.id },
+    update: { ownerName: DEMO_VENDOR.ownerName, category: DEMO_VENDOR.category },
+    create: {
+      id: DEMO_VENDOR.id,
+      businessName: DEMO_VENDOR.businessName,
+      businessAddress: DEMO_VENDOR.businessAddress,
+      businessPhone: DEMO_VENDOR.businessPhone,
+      ownerName: DEMO_VENDOR.ownerName,
+      category: DEMO_VENDOR.category,
+      email: DEMO_VENDOR.email,
+      passwordHash: await hashPassword(DEMO_VENDOR.password),
+    },
   });
-  console.log(`Seeded rider ${rider.id} (${rider.name})`);
+  console.log(
+    `Seeded vendor ${vendor.id} — log in with ${DEMO_VENDOR.email} / ${DEMO_VENDOR.password}`,
+  );
+
+  for (const data of RIDERS) {
+    const rider = await prisma.rider.upsert({
+      where: { id: data.id },
+      update: { vehicle: data.vehicle, vendorId: vendor.id },
+      create: { ...data, vendorId: vendor.id },
+    });
+    console.log(`Seeded rider ${rider.id} (${rider.name})`);
+  }
 }
 
 main()
