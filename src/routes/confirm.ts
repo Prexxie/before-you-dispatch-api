@@ -5,8 +5,7 @@ import {
   findOrderByCustomerToken as findOrderByToken,
 } from "../lib/customerToken";
 import { normalizePhone } from "../lib/phone";
-import { env, vendorDetails } from "../config/env";
-import { isTodayInLagos, startOfLagosDay } from "../lib/lagosDay";
+import { vendorDetails } from "../config/env";
 import { orderLocation } from "../lib/orderView";
 import { Order, OrderStatus } from "../generated/prisma/client";
 
@@ -14,26 +13,38 @@ import { Order, OrderStatus } from "../generated/prisma/client";
 // customerToken in the URL is the only credential.
 const router = Router();
 
+// "Not now" is final (the customer saw a warning first): the link is closed.
+// The vendor can retrigger the delivery, which issues a new link.
+const DECLINED_MESSAGE =
+  "This link is no longer active. If you change your mind, contact the business and they can send you a new one.";
+
 const ALREADY_ANSWERED_MESSAGES: Partial<Record<OrderStatus, string>> = {
   confirmed: "You've already confirmed you're ready for this delivery.",
-  not_ready: "You've already told us you're not ready for this delivery.",
+  not_ready: DECLINED_MESSAGE,
 };
 
 const PAST_CONFIRMATION_MESSAGE =
   "This delivery has already moved past confirmation.";
-
-const EARLIER_DAY_MESSAGE =
-  "This delivery was for an earlier day. Please contact the business to arrange a new one.";
 
 // A pin from the customer's earlier order, offered to prefill the map. Only
 // while they still need to share one for this order.
 async function previousLocation(order: Order) {
   if (order.status !== "confirmed" || orderLocation(order)) return null;
   const saved = await prisma.savedLocation.findUnique({
-    where: { phoneKey: normalizePhone(order.customerPhone) },
+    where: {
+      vendorId_phoneKey: {
+        vendorId: order.vendorId,
+        phoneKey: normalizePhone(order.customerPhone),
+      },
+    },
   });
   return saved
-    ? { lat: saved.lat, lng: saved.lng, landmarkNote: saved.landmarkNote }
+    ? {
+        lat: saved.lat,
+        lng: saved.lng,
+        landmarkNote: saved.landmarkNote,
+        address: saved.address,
+      }
     : null;
 }
 
@@ -54,20 +65,31 @@ router.get("/:token/confirm", async (req, res) => {
     ? await prisma.rider.findUnique({ where: { id: order.riderId } })
     : null;
 
+  // A redelivery after the rider failed the last attempt: the page words
+  // itself differently and asks the customer to check their location.
+  const lastAttempt =
+    order.attempt > 1
+      ? await prisma.orderAttempt.findFirst({
+          where: { orderId: order.id },
+          orderBy: { attemptNumber: "desc" },
+        })
+      : null;
+
   res.json({
     customerFirstName: order.customerName.split(/\s+/)[0],
-    vendorName: env.demoVendorName,
-    vendor: vendorDetails(),
+    vendorName: order.vendor.businessName,
+    vendor: vendorDetails(order.vendor),
     itemDescription: order.itemDescription,
     status: order.status,
     awaitingResponse: order.status === "pending_confirmation",
     location: orderLocation(order),
     previousLocation: await previousLocation(order),
-    // "Not now" can be undone the same day ("Actually, I'm ready").
-    canChangeToReady:
-      order.status === "not_ready" && isTodayInLagos(order.createdAt),
+    redelivery: lastAttempt
+      ? { attempt: order.attempt, failureReason: lastAttempt.failureReason }
+      : null,
     rider: rider ? { name: rider.name, phone: rider.phone } : null,
     pickedUpAt: order.pickedUpAt,
+    arrivedAt: order.arrivedAt,
     receivedAt: order.receivedAt,
   });
 });
@@ -132,29 +154,17 @@ router.post("/:token/confirm", async (req, res) => {
 
   // Conditional update so two taps racing each other can't both win.
   const { count } = await prisma.order.updateMany({
-    where: { customerToken: token, status: "pending_confirmation" },
+    // "Not now" is also allowed after "I'm ready" until the rider is sent (the
+    // customer went back a step and changed their mind); "I'm ready" only
+    // answers a pending confirmation.
+    where: {
+      customerToken: token,
+      status: ready
+        ? "pending_confirmation"
+        : { in: ["pending_confirmation", "confirmed"] },
+    },
     data: ready ? { status: newStatus, confirmedAt: now } : { status: newStatus, notReadyAt: now },
   });
-
-  // A customer who said "Not now" can change to ready later the same day
-  // (never the other way round). Same conditional-update guard as above.
-  if (count === 0 && ready) {
-    const undo = await prisma.order.updateMany({
-      where: {
-        customerToken: token,
-        status: "not_ready",
-        createdAt: { gte: startOfLagosDay() },
-      },
-      data: { status: "confirmed", confirmedAt: now },
-    });
-    if (undo.count === 1) {
-      res.json({
-        status: "confirmed",
-        message: "Thanks! You're confirmed for today's delivery.",
-      });
-      return;
-    }
-  }
 
   if (count === 0) {
     const order = await findOrderByToken(token);
@@ -162,11 +172,9 @@ router.post("/:token/confirm", async (req, res) => {
       res.status(404).json({ error: "Order not found" });
       return;
     }
-    const tooLate = ready && order.status === "not_ready";
     res.status(409).json({
-      error: tooLate
-        ? EARLIER_DAY_MESSAGE
-        : (ALREADY_ANSWERED_MESSAGES[order.status] ?? PAST_CONFIRMATION_MESSAGE),
+      error:
+        ALREADY_ANSWERED_MESSAGES[order.status] ?? PAST_CONFIRMATION_MESSAGE,
       status: order.status,
     });
     return;

@@ -9,6 +9,7 @@ import { OrderStatus } from "../generated/prisma/client";
 const router = Router();
 
 export const LANDMARK_NOTE_MAX_LENGTH = 200;
+export const ADDRESS_MAX_LENGTH = 200;
 
 const NOT_EDITABLE_MESSAGES: Partial<Record<OrderStatus, string>> = {
   pending_confirmation: "Confirm you're ready before sharing your location.",
@@ -18,12 +19,17 @@ const NOT_EDITABLE_MESSAGES: Partial<Record<OrderStatus, string>> = {
 const ALREADY_DISPATCHED_MESSAGE =
   "The rider already has your location for this delivery, so it can't be changed.";
 
-type LocationInput = { lat: number; lng: number; landmarkNote: string };
+type LocationInput = {
+  lat: number;
+  lng: number;
+  landmarkNote: string;
+  address: string | null;
+};
 
 function parseLocation(
   body: unknown,
 ): { location: LocationInput } | { fields: string[] } {
-  const { lat, lng, landmarkNote } = (body ?? {}) as Record<string, unknown>;
+  const { lat, lng, landmarkNote, address } = (body ?? {}) as Record<string, unknown>;
   const fields: string[] = [];
 
   if (typeof lat !== "number" || !Number.isFinite(lat) || lat < -90 || lat > 90) {
@@ -37,18 +43,30 @@ function parseLocation(
     fields.push("landmarkNote");
   }
 
+  // Optional; blank means none.
+  const addr = typeof address === "string" ? address.trim() : "";
+  if (address != null && typeof address !== "string") fields.push("address");
+  if (addr.length > ADDRESS_MAX_LENGTH) fields.push("address");
+
   if (fields.length > 0) return { fields };
-  return { location: { lat: lat as number, lng: lng as number, landmarkNote: note } };
+  return {
+    location: {
+      lat: lat as number,
+      lng: lng as number,
+      landmarkNote: note,
+      address: addr === "" ? null : addr,
+    },
+  };
 }
 
-// POST /orders/:token/location — body { lat, lng, landmarkNote }.
+// POST /orders/:token/location — body { lat, lng, landmarkNote, address? }.
 // Allowed while the order is confirmed, so the customer can correct the pin
 // until the rider is sent. Also remembered for the customer's next order.
 router.post("/:token/location", async (req, res) => {
   const parsed = parseLocation(req.body);
   if ("fields" in parsed) {
     res.status(400).json({
-      error: `Send lat (-90 to 90), lng (-180 to 180) and a landmarkNote of 1 to ${LANDMARK_NOTE_MAX_LENGTH} characters`,
+      error: `Send lat (-90 to 90), lng (-180 to 180) and a landmarkNote of 1 to ${LANDMARK_NOTE_MAX_LENGTH} characters; address, if sent, must be text of at most ${ADDRESS_MAX_LENGTH} characters`,
       fields: parsed.fields,
     });
     return;
@@ -67,13 +85,19 @@ router.post("/:token/location", async (req, res) => {
   const saved = await prisma.$transaction(async (tx) => {
     const { count } = await tx.order.updateMany({
       where: { id: order.id, status: "confirmed" },
-      data: { ...location, locationSavedAt: savedAt },
+      data: {
+        lat: location.lat,
+        lng: location.lng,
+        landmarkNote: location.landmarkNote,
+        locationAddress: location.address,
+        locationSavedAt: savedAt,
+      },
     });
     if (count === 0) return false;
     const phoneKey = normalizePhone(order.customerPhone);
     await tx.savedLocation.upsert({
-      where: { phoneKey },
-      create: { phoneKey, ...location },
+      where: { vendorId_phoneKey: { vendorId: order.vendorId, phoneKey } },
+      create: { vendorId: order.vendorId, phoneKey, ...location },
       update: location,
     });
     return true;

@@ -1,4 +1,4 @@
-# Before You Dispatch — Project Context
+# WakaRoute — Project Context
 
 A simple way to stop wasted delivery trips: the customer confirms they're ready and shares exactly where to find them, before a rider is ever sent out.
 

@@ -2,7 +2,7 @@ import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { UUID_PATTERN } from "../lib/customerToken";
 import { orderLocation } from "../lib/orderView";
-import { env, vendorDetails } from "../config/env";
+import { vendorDetails } from "../config/env";
 import { FailureReason, OrderStatus } from "../generated/prisma/client";
 
 // Rider handoff (MVP feature 4). Public, no auth: the unguessable riderToken
@@ -16,7 +16,7 @@ async function findJob(token: string) {
   if (!UUID_PATTERN.test(token)) return null;
   const order = await prisma.order.findUnique({
     where: { riderToken: token },
-    include: { rider: true },
+    include: { rider: true, vendor: true },
   });
   return order && orderLocation(order) ? order : null;
 }
@@ -39,11 +39,14 @@ router.get("/:token", async (req, res) => {
     location: order.pickedUpAt ? orderLocation(order) : null,
     status: order.status,
     failureReason: order.failureReason,
+    failureNote: order.failureNote,
     riderName: order.rider.name,
-    vendorName: env.demoVendorName,
+    vendorName: order.vendor.businessName,
     // The pickup point.
-    vendor: vendorDetails(),
+    vendor: vendorDetails(order.vendor),
     pickedUpAt: order.pickedUpAt,
+    // Set once the rider taps "I've arrived" at the customer's location.
+    arrivedAt: order.arrivedAt,
     // Set once the customer taps "I've received my delivery"; the rider can
     // only complete the delivery after that.
     receivedAt: order.receivedAt,
@@ -95,18 +98,148 @@ router.post("/:token/pickup", async (req, res) => {
   });
 });
 
+const NOT_ARRIVABLE_MESSAGES: Partial<Record<OrderStatus, string>> = {
+  confirmed: "This delivery hasn't been dispatched yet.",
+  delivered: "This delivery is already finished.",
+  failed: "This delivery is already finished.",
+};
+
+// POST /rider/:token/arrived — the rider confirms they're at the customer's
+// location. Purely a status update: it doesn't unlock anything (completing
+// the delivery still needs the customer's receipt) and isn't required
+// before marking an outcome, same reasoning as pickup. Requires pickup
+// first — arriving before picking up the order doesn't make sense — though
+// in practice the rider's own screens only offer this after pickup already.
+// Tapping again is harmless.
+router.post("/:token/arrived", async (req, res) => {
+  const order = await findJob(req.params.token);
+  if (!order) {
+    res.status(404).json({ error: "Delivery not found" });
+    return;
+  }
+  if (order.pickedUpAt === null) {
+    res.status(409).json({
+      error: "Confirm pickup before marking that you've arrived.",
+      status: order.status,
+    });
+    return;
+  }
+
+  const arrivedAt = new Date();
+  await prisma.order.updateMany({
+    where: { id: order.id, status: "dispatched", arrivedAt: null },
+    data: { arrivedAt },
+  });
+
+  const current = await prisma.order.findUnique({ where: { id: order.id } });
+  if (!current) {
+    res.status(404).json({ error: "Delivery not found" });
+    return;
+  }
+  if (current.arrivedAt === null) {
+    res.status(409).json({
+      error:
+        NOT_ARRIVABLE_MESSAGES[current.status] ??
+        "This delivery can't be marked arrived right now.",
+      status: current.status,
+    });
+    return;
+  }
+  res.json({ arrivedAt: current.arrivedAt });
+});
+
+// POST /rider/:token/undo-arrived — the rider tapped "I've arrived" by
+// mistake. Clears it, unless the customer has already confirmed receipt or the
+// delivery is finished. Harmless if it isn't set.
+router.post("/:token/undo-arrived", async (req, res) => {
+  const order = await findJob(req.params.token);
+  if (!order) {
+    res.status(404).json({ error: "Delivery not found" });
+    return;
+  }
+  await prisma.order.updateMany({
+    where: { id: order.id, status: "dispatched", arrivedAt: { not: null }, receivedAt: null },
+    data: { arrivedAt: null },
+  });
+  const current = await prisma.order.findUnique({ where: { id: order.id } });
+  if (!current) {
+    res.status(404).json({ error: "Delivery not found" });
+    return;
+  }
+  if (current.arrivedAt !== null) {
+    res.status(409).json({
+      error: "This can't be undone now: the customer has confirmed receipt, or the delivery is finished.",
+      status: current.status,
+    });
+    return;
+  }
+  res.json({ arrivedAt: null });
+});
+
+// POST /rider/:token/undo-pickup — the rider tapped "picked up" by mistake.
+// Clears it, which locks the customer's pin again (it's withheld until
+// pickup). Not once they've marked arrival (undo that first), the customer has
+// confirmed receipt, or the delivery is finished. Harmless if it isn't set.
+router.post("/:token/undo-pickup", async (req, res) => {
+  const order = await findJob(req.params.token);
+  if (!order) {
+    res.status(404).json({ error: "Delivery not found" });
+    return;
+  }
+  await prisma.order.updateMany({
+    where: {
+      id: order.id,
+      status: "dispatched",
+      pickedUpAt: { not: null },
+      arrivedAt: null,
+      receivedAt: null,
+    },
+    data: { pickedUpAt: null },
+  });
+  const current = await prisma.order.findUnique({ where: { id: order.id } });
+  if (!current) {
+    res.status(404).json({ error: "Delivery not found" });
+    return;
+  }
+  if (current.pickedUpAt !== null) {
+    res.status(409).json({
+      error:
+        current.arrivedAt !== null
+          ? "Undo \"I've arrived\" first."
+          : "This can't be undone now: the customer has confirmed receipt, or the delivery is finished.",
+      status: current.status,
+    });
+    return;
+  }
+  res.json({ pickedUpAt: null });
+});
+
+export const FAILURE_NOTE_MAX_LENGTH = 200;
+
 // POST /rider/:token/outcome — { outcome: "delivered" } or
-// { outcome: "failed", reason: <FailureReason> }. Once only, while dispatched.
+// { outcome: "failed", reason: <FailureReason>, note? }. `note` is the rider's
+// own words and is required (1 to 200 characters) when reason is "other";
+// ignored for the preset reasons. Once only, while dispatched.
 // Delivered (completed) needs the customer's "I've received my delivery"
 // first; failed is only possible before that (CLAUDE.md flow step 6).
 router.post("/:token/outcome", async (req, res) => {
-  const { outcome, reason } = req.body ?? {};
+  const { outcome, reason, note } = req.body ?? {};
   const delivered = outcome === "delivered";
   const failed = outcome === "failed" && FAILURE_REASONS.includes(reason);
   if (!delivered && !failed) {
     res.status(400).json({
       error: `Send { outcome: "delivered" } or { outcome: "failed", reason } with reason one of: ${FAILURE_REASONS.join(", ")}`,
       fields: outcome === "failed" ? ["reason"] : ["outcome"],
+    });
+    return;
+  }
+
+  const failureNote =
+    failed && reason === "other" && typeof note === "string" ? note.trim() : "";
+  if (failed && reason === "other" && (failureNote === "" || failureNote.length > FAILURE_NOTE_MAX_LENGTH)) {
+    res.status(400).json({
+      error: `Tell us what happened: a note of 1 to ${FAILURE_NOTE_MAX_LENGTH} characters is required when the reason is "other"`,
+      fields: ["note"],
     });
     return;
   }
@@ -129,6 +262,7 @@ router.post("/:token/outcome", async (req, res) => {
       status,
       completedAt: new Date(),
       failureReason: failed ? (reason as FailureReason) : null,
+      failureNote: failureNote || null,
     },
   });
 
@@ -152,7 +286,11 @@ router.post("/:token/outcome", async (req, res) => {
     return;
   }
 
-  res.json({ status, failureReason: failed ? reason : null });
+  res.json({
+    status,
+    failureReason: failed ? reason : null,
+    failureNote: failureNote || null,
+  });
 });
 
 export default router;

@@ -1,6 +1,6 @@
 # before-you-dispatch-api
 
-Backend for **Before You Dispatch**: orders, statuses, link generation, and messaging integration. See [CLAUDE.md](CLAUDE.md) for full product context and scope.
+Backend for **WakaRoute**: orders, statuses, link generation, and messaging integration. See [CLAUDE.md](CLAUDE.md) for full product context and scope.
 
 Stack: Node.js, Express, TypeScript, Prisma 7, PostgreSQL (hosted on Supabase).
 
