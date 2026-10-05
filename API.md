@@ -53,13 +53,19 @@ The customer (`/orders/:customerToken/...`) and rider (`/rider/:riderToken/...`)
   "ownerName": "Precious Adebayo",
   "category": "food_restaurant",
   "email": "owner@precious-food.example",
-  "password": "at least 8 characters"
+  "password": "Str0ng!Pass"
 }
 ```
 
-`businessAddress` is required — it's the rider's pickup point, not just context. `businessPhone` and `logoDataUrl` are optional (`null` if left out). `businessName`, `businessAddress`, `ownerName`, a valid `category`, a valid `email` and a `password` of at least 8 characters are required. `logoDataUrl`, if sent, must be a `data:image/(png|jpeg|webp|gif);base64,...` string under 500 KB decoded, or it's a `400`. `ownerName` and `category` are account context only — never shown to customers or riders. `category` is one of: `retail_ecommerce` ("Retail / e-commerce"), `food_restaurant` ("Food or restaurant"), `pharmacy` ("Pharmacy"), `delivery_logistics` ("Delivery / logistics / dispatch company"), `other`.
+`businessAddress` is required — it's the rider's pickup point, not just context. `businessPhone` and `logoDataUrl` are optional (`null` if left out). `businessName`, `businessAddress`, `ownerName`, a valid `category`, a valid `email` and a strong `password` are required. `logoDataUrl`, if sent, must be a `data:image/(png|jpeg|webp|gif);base64,...` string under 500 KB decoded, or it's a `400`. `ownerName` and `category` are account context only — never shown to customers or riders. `category` is one of: `food_restaurant` ("Food / Restaurant"), `ecommerce` ("E-commerce"), `retail_store` ("Retail Store"), `courier_dispatch` ("Courier / Dispatch Service"), `phones_gadgets` ("Phones and Gadgets"), `pharmacy` ("Pharmacy"), `fashion_clothing` ("Fashion / Clothing"), `hair_beauty` ("Hair / Beauty"), `health_wellness` ("Health / Wellness"), `other` ("Other"). `other` requires `categoryOther` (the vendor's own words, up to 60 characters); every other category stores `categoryOther: null`.
 
-- `201`: the created vendor (never includes `passwordHash`): `{ "id", "businessName", "businessAddress", "businessPhone", "logoUrl", "ownerName", "category", "themeColor", "email", "hasPassword" }`. Sets the session cookie. `themeColor` always starts `"green"` (see `PATCH /auth/me` below).
+**Strong password:** any password being chosen (sign-up, `reset-password`, `change-password`) must be 8 to 72 characters with an uppercase letter, a lowercase letter, a number and a symbol, else `400` with `fields: ["password"]` (`["newPassword"]` on the two reset/change routes). Log-in doesn't apply the rule, so older accounts still work.
+
+**Validation (all vendor, rider and customer input):** `email` must be a well-formed address (one `@`, no spaces, a real domain with a 2+ letter ending, e.g. `name@example.com`), else `400` with `fields: ["email"]` and nothing is saved. This applies to sign-up, log-in and forgot-password. Phone numbers (`businessPhone` if sent, rider `phone`, order `customerPhone`) must be a Nigerian mobile number (`0803 123 4567`, `+234 803 123 4567`, `2348031234567`) or an international number with a leading `+` (8 to 15 digits); otherwise `400` naming the field. Letters and other characters are rejected.
+
+**One account per email:** a Google account and an email sign-up share one account. Sign-up with an email that already exists returns `409` with `code: "email_taken"`, or `code: "google_account"` if that account only has Google sign-in. `POST /auth/login` on a Google-only account returns `401` with `{ "error": "This email uses Google sign-in", "code": "google_account" }`; a wrong password returns `401` with `code: "invalid_credentials"`. Google sign-in never asks for a password, and the vendor can set one later (Settings, or forgot-password).
+
+- `201`: the created vendor (never includes `passwordHash`): `{ "id", "businessName", "businessAddress", "businessPhone", "logoUrl", "ownerName", "category", "categoryOther", "themeColor", "email", "hasPassword" }`. Sets the session cookie. `themeColor` always starts `"green"` (see `PATCH /auth/me` below).
 - `400` `{ "error": "...", "fields": [...] }`
 - `409` `{ "error": "An account with this email already exists", "fields": ["email"] }`
 
@@ -81,10 +87,10 @@ Email goes out over Brevo's HTTPS API (`EMAIL_API_KEY`, and `EMAIL_FROM`, a send
 
 ### `POST /auth/reset-password`
 
-**Body** `{ "token": "<from the emailed link>", "newPassword": "at least 8 characters" }`
+**Body** `{ "token": "<from the emailed link>", "newPassword": "Str0ng!Pass" }`
 
 - `200` `{ "message": "Password updated" }`
-- `400` `{ "error": "newPassword must be at least 8 characters", "fields": ["newPassword"] }`
+- `400` `{ "error": "Password must be at least 8 characters with an uppercase letter, a lowercase letter, a number and a symbol", "fields": ["newPassword"] }`
 - `400` `{ "error": "This reset link is invalid or has expired. Request a new one.", "fields": ["token"] }` — unknown, already used, or expired.
 
 ### `POST /auth/google`
@@ -121,7 +127,7 @@ The "Edit Profile" form, plus the "Workspace theme" swatch picker (design: "Vend
 { "businessName": "Precious Food Business", "businessAddress": "12 Allen Avenue, Ikeja" }
 ```
 
-`businessPhone` and `logoDataUrl` clear to `null` when sent as an empty string. `businessName`, `businessAddress` and `ownerName` can't be cleared (`400` if sent empty); `category` and `themeColor` must be one of the valid values if sent; `logoDataUrl` follows the same rules as at sign up.
+`businessPhone` and `logoDataUrl` clear to `null` when sent as an empty string. `businessName`, `businessAddress` and `ownerName` can't be cleared (`400` if sent empty); `category` and `themeColor` must be one of the valid values if sent (send `categoryOther` with `category: "other"`); `logoDataUrl` follows the same rules as at sign up.
 
 `themeColor` is one of `green` (the default — literally "no override": the app's own green/crimson look, unchanged), `crimson`, `navy`, `amber`, `purple`. A non-`green` value re-tints the vendor's own dashboard chrome (primary buttons, the sidebar, borders, highlighted stats and badges) to that one color — purely cosmetic, never sent to or seen by customers or riders, and the "WakaRoute" brand mark itself never changes.
 
@@ -130,10 +136,10 @@ The "Edit Profile" form, plus the "Workspace theme" swatch picker (design: "Vend
 
 ### `POST /auth/change-password`
 
-**Body** `{ "currentPassword": "...", "newPassword": "at least 8 characters" }`
+**Body** `{ "currentPassword": "...", "newPassword": "Str0ng!Pass" }`
 
 - `200` `{ "message": "Password changed" }`. An account made with Google (`hasPassword: false`) has no current password to check, so it can set one without `currentPassword`.
-- `400` `{ "error": "newPassword must be at least 8 characters", "fields": ["newPassword"] }`
+- `400` `{ "error": "Password must be at least 8 characters with an uppercase letter, a lowercase letter, a number and a symbol", "fields": ["newPassword"] }`
 - `401` `{ "error": "Current password is incorrect", "fields": ["currentPassword"] }`
 
 ---
@@ -144,7 +150,7 @@ The logged-in vendor's riders, sorted by name.
 
 **Query parameters:** `active=true` narrows to riders who can still be assigned (what the create-order dropdown calls). With no filter, every rider is returned, including deactivated ones (the riders management page, which shows both).
 
-`200` → `[{ "id": "seed-rider-2", "name": "Chidi Okafor", "phone": "+2348120045521", "vehicle": "car", "active": true }, ...]`
+`200` → `[{ "id": "seed-rider-2", "name": "Chidi Okafor", "phone": "+2348120045521", "vehicle": "car", "photoUrl": null, "active": true }, ...]`
 
 `vehicle` is `"bike"`, `"car"`, `"van"` or `null`.
 
@@ -162,10 +168,20 @@ Add a rider — the vendor's own staff, or a third-party dispatch rider they use
 { "name": "Lawan Musa", "phone": "0803 555 1234", "vehicle": "bike" }
 ```
 
-All three are required. `vehicle` is one of `"bike"`, `"car"`, `"van"`.
+`name`, `phone` and `vehicle` are required; `phone` must pass the phone validation described under sign-up. `vehicle` is one of `"bike"`, `"car"`, `"van"`. `photoDataUrl` is optional: a small `data:image/...` string, same rules as `logoDataUrl` (under 500 KB), stored as `photoUrl`.
 
-- `201`: the created rider: `{ "id", "name", "phone", "vehicle", "active": true, "vendorId" }`.
+- `201`: the created rider: `{ "id", "name", "phone", "vehicle", "photoUrl", "active": true, "vendorId" }`.
 - `400` `{ "error": "...", "fields": [...] }`
+
+---
+
+## `PATCH /riders/:id`
+
+Edit a rider's details. **Body:** any of `name`, `phone`, `vehicle`, `photoDataUrl`; only the fields sent change. `photoDataUrl: ""` removes the photo. Same validation as `POST /riders`. Doesn't change `active` (use the routes below) or past orders.
+
+- `200`: the updated rider.
+- `400` `{ "error": "...", "fields": [...] }`, including `"Nothing to update"` when the body has none of the fields.
+- `404` `{ "error": "Rider not found" }`, including another vendor's rider.
 
 ---
 

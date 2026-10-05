@@ -75,7 +75,7 @@
             "url": "{{baseUrl}}/auth/signup",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"businessName\": \"Postman Test Biz\",\n  \"businessAddress\": \"1 Postman Street, Lagos\",\n  \"ownerName\": \"Test Owner\",\n  \"category\": \"other\",\n  \"email\": \"postman-signup-{{$timestamp}}@example.com\",\n  \"password\": \"Password123\"\n}"
+              "raw": "{\n  \"businessName\": \"Postman Test Biz\",\n  \"businessAddress\": \"1 Postman Street, Lagos\",\n  \"ownerName\": \"Test Owner\",\n  \"category\": \"other\",\n  \"categoryOther\": \"Bakery\",\n  \"email\": \"postman-signup-{{$timestamp}}@example.com\",\n  \"password\": \"Password123!\"\n}"
             }
           },
           "event": [
@@ -87,7 +87,7 @@
                   "pm.test('201 with the created vendor, including ownerName and category', () => {",
                   "  pm.response.to.have.status(201);",
                   "  const body = pm.response.json();",
-                  "  pm.expect(body).to.have.all.keys('id', 'businessName', 'businessAddress', 'businessPhone', 'logoUrl', 'ownerName', 'category', 'themeColor', 'email', 'hasPassword');",
+                  "  pm.expect(body).to.have.all.keys('id', 'businessName', 'businessAddress', 'businessPhone', 'logoUrl', 'ownerName', 'category', 'categoryOther', 'themeColor', 'email', 'hasPassword');",
                   "  pm.expect(body.ownerName).to.eql('Test Owner');",
                   "  pm.expect(body.category).to.eql('other');",
                   "  pm.expect(body.businessAddress).to.eql('1 Postman Street, Lagos');",
@@ -110,7 +110,7 @@
             "url": "{{baseUrl}}/auth/signup",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"businessName\": \"Incomplete Biz\",\n  \"email\": \"incomplete-{{$timestamp}}@example.com\",\n  \"password\": \"Password123\"\n}"
+              "raw": "{\n  \"businessName\": \"Incomplete Biz\",\n  \"email\": \"incomplete-{{$timestamp}}@example.com\",\n  \"password\": \"Password123!\"\n}"
             }
           },
           "event": [
@@ -174,7 +174,7 @@
                   "pm.test('200 with the vendor (no passwordHash)', () => {",
                   "  pm.response.to.have.status(200);",
                   "  const body = pm.response.json();",
-                  "  pm.expect(body).to.have.all.keys('id', 'businessName', 'businessAddress', 'businessPhone', 'logoUrl', 'ownerName', 'category', 'themeColor', 'email', 'hasPassword');",
+                  "  pm.expect(body).to.have.all.keys('id', 'businessName', 'businessAddress', 'businessPhone', 'logoUrl', 'ownerName', 'category', 'categoryOther', 'themeColor', 'email', 'hasPassword');",
                   "});"
                 ]
               }
@@ -2043,7 +2043,7 @@
             "url": "{{baseUrl}}/auth/signup",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"businessName\": \"Settings Test Biz\",\n  \"businessAddress\": \"1 Settings St, Lagos\",\n  \"ownerName\": \"Settings Tester\",\n  \"category\": \"other\",\n  \"email\": \"postman-settings-{{$timestamp}}@example.com\",\n  \"password\": \"Password123\"\n}"
+              "raw": "{\n  \"businessName\": \"Settings Test Biz\",\n  \"businessAddress\": \"1 Settings St, Lagos\",\n  \"ownerName\": \"Settings Tester\",\n  \"category\": \"other\",\n  \"categoryOther\": \"Bakery\",\n  \"email\": \"postman-settings-{{$timestamp}}@example.com\",\n  \"password\": \"Password123!\"\n}"
             }
           },
           "event": [
@@ -2264,7 +2264,7 @@
             "url": "{{baseUrl}}/auth/change-password",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"currentPassword\": \"WrongPassword\",\n  \"newPassword\": \"NewPassword123\"\n}"
+              "raw": "{\n  \"currentPassword\": \"WrongPassword\",\n  \"newPassword\": \"NewPassword123!\"\n}"
             }
           },
           "event": [
@@ -2295,7 +2295,7 @@
             "url": "{{baseUrl}}/auth/change-password",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"currentPassword\": \"Password123\",\n  \"newPassword\": \"short\"\n}"
+              "raw": "{\n  \"currentPassword\": \"Password123!\",\n  \"newPassword\": \"short\"\n}"
             }
           },
           "event": [
@@ -2326,7 +2326,7 @@
             "url": "{{baseUrl}}/auth/change-password",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"currentPassword\": \"Password123\",\n  \"newPassword\": \"NewPassword123\"\n}"
+              "raw": "{\n  \"currentPassword\": \"Password123!\",\n  \"newPassword\": \"NewPassword123!\"\n}"
             }
           },
           "event": [
@@ -2354,7 +2354,7 @@
             "url": "{{baseUrl}}/auth/login",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{settingsTestEmail}}\",\n  \"password\": \"NewPassword123\"\n}"
+              "raw": "{\n  \"email\": \"{{settingsTestEmail}}\",\n  \"password\": \"NewPassword123!\"\n}"
             }
           },
           "event": [
@@ -2452,7 +2452,7 @@
             "url": "{{baseUrl}}/auth/reset-password",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"token\": \"deadbeef\",\n  \"newPassword\": \"NewPassword123\"\n}"
+              "raw": "{\n  \"token\": \"deadbeef\",\n  \"newPassword\": \"NewPassword123!\"\n}"
             }
           },
           "event": [

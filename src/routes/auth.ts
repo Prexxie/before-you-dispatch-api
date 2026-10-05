@@ -8,6 +8,8 @@ import {
 } from "../lib/auth";
 import { requireVendor } from "../middleware/requireVendor";
 import { parseLogoDataUrl } from "../lib/logo";
+import { EMAIL_ERROR, PASSWORD_ERROR, isStrongPassword, isValidEmail } from "../lib/validate";
+import { PHONE_ERROR, isValidPhone } from "../lib/phone";
 import { sendEmail } from "../lib/email";
 import { RESET_TOKEN_TTL_MS, hashResetToken, newResetToken } from "../lib/resetToken";
 import { env } from "../config/env";
@@ -16,10 +18,27 @@ import { ThemeColor, Vendor, VendorCategory } from "../generated/prisma/client";
 
 const router = Router();
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const MIN_PASSWORD_LENGTH = 8;
 const VENDOR_CATEGORIES = Object.values(VendorCategory);
 const THEME_COLORS = Object.values(ThemeColor);
+const MAX_CATEGORY_OTHER_LENGTH = 60;
+
+// Shown when someone tries a password on an account that was made with
+// Google and never given one. The web app matches on `code`, not the text.
+const GOOGLE_ACCOUNT_ERROR = "This email uses Google sign-in";
+
+// The optional business phone: empty means "none" (null), anything else has
+// to be a real phone number. Returns "invalid" for the latter.
+function parseBusinessPhone(value: unknown): string | null | "invalid" {
+  if (typeof value !== "string" || !value.trim()) return null;
+  return isValidPhone(value) ? value.trim() : "invalid";
+}
+
+// "other" needs the vendor's own words; every other category clears them.
+function parseCategoryOther(category: unknown, value: unknown): string | null | "invalid" {
+  if (category !== "other") return null;
+  const text = typeof value === "string" ? value.trim() : "";
+  return text && text.length <= MAX_CATEGORY_OTHER_LENGTH ? text : "invalid";
+}
 
 function vendorView(vendor: Vendor) {
   return {
@@ -30,6 +49,8 @@ function vendorView(vendor: Vendor) {
     logoUrl: vendor.logoUrl,
     ownerName: vendor.ownerName,
     category: vendor.category,
+    // The vendor's own words when category is "other"; null otherwise.
+    categoryOther: vendor.categoryOther,
     // A per-vendor dashboard accent (design: "Vendor: Settings", Workspace
     // theme). Never sent to customers or riders — vendorDetails() (in
     // config/env.ts) is their separate, public subset and doesn't include it.
@@ -53,14 +74,12 @@ router.post("/signup", async (req, res) => {
     typeof body.businessName === "string" ? body.businessName.trim() : "";
   const businessAddress =
     typeof body.businessAddress === "string" ? body.businessAddress.trim() : "";
-  const businessPhone =
-    typeof body.businessPhone === "string" && body.businessPhone.trim()
-      ? body.businessPhone.trim()
-      : null;
+  const businessPhone = parseBusinessPhone(body.businessPhone);
   const logoUrl = parseLogoDataUrl(body.logoDataUrl);
   const ownerName =
     typeof body.ownerName === "string" ? body.ownerName.trim() : "";
   const category = body.category;
+  const categoryOther = parseCategoryOther(category, body.categoryOther);
   const email =
     typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
   const password = typeof body.password === "string" ? body.password : "";
@@ -70,39 +89,69 @@ router.post("/signup", async (req, res) => {
   if (!businessAddress) fields.push("businessAddress");
   if (!ownerName) fields.push("ownerName");
   if (!VENDOR_CATEGORIES.includes(category)) fields.push("category");
-  if (!EMAIL_PATTERN.test(email)) fields.push("email");
-  if (password.length < MIN_PASSWORD_LENGTH) fields.push("password");
+  if (categoryOther === "invalid") fields.push("categoryOther");
+  if (!isValidEmail(email)) fields.push("email");
+  if (!isStrongPassword(password)) fields.push("password");
+  if (businessPhone === "invalid") fields.push("businessPhone");
   if (logoUrl === "invalid") fields.push("logoDataUrl");
   if (fields.length > 0) {
+    // A bad email gets its own message: it's the field people mistype.
     res.status(400).json({
-      error: `businessName, businessAddress, ownerName, a valid category and email are required; password must be at least ${MIN_PASSWORD_LENGTH} characters; logoDataUrl, if sent, must be a small image (under 500 KB)`,
+      error: fields.includes("email")
+        ? EMAIL_ERROR
+        : fields.includes("password")
+          ? PASSWORD_ERROR
+          : fields.includes("businessPhone")
+          ? PHONE_ERROR
+          : `businessName, businessAddress, ownerName, a valid category (with categoryOther when it's "other") and email are required; logoDataUrl, if sent, must be a small image (under 500 KB)`,
       fields,
     });
     return;
   }
 
+  // One account per email, however it was made: a Google account and an
+  // email sign-up with the same address are the same account.
   const existing = await prisma.vendor.findUnique({ where: { email } });
   if (existing) {
     res.status(409).json({
-      error: "An account with this email already exists",
+      error:
+        existing.passwordHash === null && existing.googleId
+          ? `${GOOGLE_ACCOUNT_ERROR}. Continue with Google, or log in and set a password in Settings.`
+          : "An account with this email already exists. Log in instead.",
+      code: existing.passwordHash === null && existing.googleId ? "google_account" : "email_taken",
       fields: ["email"],
     });
     return;
   }
 
   const passwordHash = await hashPassword(password);
-  const vendor = await prisma.vendor.create({
-    data: {
-      businessName,
-      businessAddress,
-      businessPhone,
-      logoUrl,
-      ownerName,
-      category: category as VendorCategory,
-      email,
-      passwordHash,
-    },
-  });
+  let vendor: Vendor;
+  try {
+    vendor = await prisma.vendor.create({
+      data: {
+        businessName,
+        businessAddress,
+        businessPhone,
+        logoUrl,
+        ownerName,
+        category: category as VendorCategory,
+        categoryOther,
+        email,
+        passwordHash,
+      },
+    });
+  } catch (err) {
+    // Two sign-ups with the same email at once: the unique index decides.
+    if ((err as { code?: string }).code === "P2002") {
+      res.status(409).json({
+        error: "An account with this email already exists. Log in instead.",
+        code: "email_taken",
+        fields: ["email"],
+      });
+      return;
+    }
+    throw err;
+  }
 
   setSessionCookie(res, vendor.id);
   res.status(201).json(vendorView(vendor));
@@ -115,13 +164,24 @@ router.post("/login", async (req, res) => {
     typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
   const password = typeof body.password === "string" ? body.password : "";
 
-  const vendor = email
-    ? await prisma.vendor.findUnique({ where: { email } })
-    : null;
+  if (!isValidEmail(email)) {
+    res.status(400).json({ error: EMAIL_ERROR, fields: ["email"] });
+    return;
+  }
+
+  const vendor = await prisma.vendor.findUnique({ where: { email } });
+  // Made with Google and never given a password: say so, instead of a
+  // "wrong password" they could never fix. (This does tell a caller that the
+  // email has a Google account; the same is already visible from sign-up's
+  // "email taken" answer.)
+  if (vendor && vendor.passwordHash === null) {
+    res.status(401).json({ error: GOOGLE_ACCOUNT_ERROR, code: "google_account" });
+    return;
+  }
   const valid =
     vendor?.passwordHash != null && (await verifyPassword(password, vendor.passwordHash));
   if (!vendor || !valid) {
-    res.status(401).json({ error: "Incorrect email or password" });
+    res.status(401).json({ error: "Incorrect email or password", code: "invalid_credentials" });
     return;
   }
 
@@ -188,25 +248,26 @@ router.post("/google/signup", async (req, res) => {
     typeof body.businessName === "string" ? body.businessName.trim() : "";
   const businessAddress =
     typeof body.businessAddress === "string" ? body.businessAddress.trim() : "";
-  const businessPhone =
-    typeof body.businessPhone === "string" && body.businessPhone.trim()
-      ? body.businessPhone.trim()
-      : null;
+  const businessPhone = parseBusinessPhone(body.businessPhone);
   const logoUrl = parseLogoDataUrl(body.logoDataUrl);
   const ownerName =
     typeof body.ownerName === "string" ? body.ownerName.trim() : "";
   const category = body.category;
+  const categoryOther = parseCategoryOther(category, body.categoryOther);
 
   const fields: string[] = [];
   if (!businessName) fields.push("businessName");
   if (!businessAddress) fields.push("businessAddress");
   if (!ownerName) fields.push("ownerName");
   if (!VENDOR_CATEGORIES.includes(category)) fields.push("category");
+  if (categoryOther === "invalid") fields.push("categoryOther");
+  if (businessPhone === "invalid") fields.push("businessPhone");
   if (logoUrl === "invalid") fields.push("logoDataUrl");
   if (fields.length > 0) {
     res.status(400).json({
-      error:
-        "businessName, businessAddress, ownerName and a valid category are required; logoDataUrl, if sent, must be a small image (under 500 KB)",
+      error: fields.includes("businessPhone")
+        ? PHONE_ERROR
+        : 'businessName, businessAddress, ownerName and a valid category (with categoryOther when it\'s "other") are required; logoDataUrl, if sent, must be a small image (under 500 KB)',
       fields,
     });
     return;
@@ -231,6 +292,7 @@ router.post("/google/signup", async (req, res) => {
       logoUrl,
       ownerName,
       category: category as VendorCategory,
+      categoryOther,
       email: identity.email,
       googleId: identity.googleId,
       passwordHash: null,
@@ -285,10 +347,9 @@ router.patch("/me", requireVendor, async (req, res) => {
     else data.businessAddress = businessAddress;
   }
   if ("businessPhone" in body) {
-    data.businessPhone =
-      typeof body.businessPhone === "string" && body.businessPhone.trim()
-        ? body.businessPhone.trim()
-        : null;
+    const businessPhone = parseBusinessPhone(body.businessPhone);
+    if (businessPhone === "invalid") fields.push("businessPhone");
+    else data.businessPhone = businessPhone;
   }
   if ("logoDataUrl" in body) {
     const logoUrl = parseLogoDataUrl(body.logoDataUrl);
@@ -302,7 +363,14 @@ router.patch("/me", requireVendor, async (req, res) => {
   }
   if ("category" in body) {
     if (!VENDOR_CATEGORIES.includes(body.category)) fields.push("category");
-    else data.category = body.category as VendorCategory;
+    else {
+      const categoryOther = parseCategoryOther(body.category, body.categoryOther);
+      if (categoryOther === "invalid") fields.push("categoryOther");
+      else {
+        data.category = body.category as VendorCategory;
+        data.categoryOther = categoryOther;
+      }
+    }
   }
   if ("themeColor" in body) {
     if (!THEME_COLORS.includes(body.themeColor)) fields.push("themeColor");
@@ -311,8 +379,9 @@ router.patch("/me", requireVendor, async (req, res) => {
 
   if (fields.length > 0) {
     res.status(400).json({
-      error:
-        "businessName, businessAddress and ownerName can't be empty; category and themeColor must be valid; logoDataUrl, if sent, must be a small image (under 500 KB)",
+      error: fields.includes("businessPhone")
+        ? PHONE_ERROR
+        : "businessName, businessAddress and ownerName can't be empty; category (with categoryOther when it's \"other\") and themeColor must be valid; logoDataUrl, if sent, must be a small image (under 500 KB)",
       fields,
     });
     return;
@@ -333,9 +402,9 @@ router.post("/change-password", requireVendor, async (req, res) => {
     typeof body.currentPassword === "string" ? body.currentPassword : "";
   const newPassword = typeof body.newPassword === "string" ? body.newPassword : "";
 
-  if (newPassword.length < MIN_PASSWORD_LENGTH) {
+  if (!isStrongPassword(newPassword)) {
     res.status(400).json({
-      error: `newPassword must be at least ${MIN_PASSWORD_LENGTH} characters`,
+      error: PASSWORD_ERROR,
       fields: ["newPassword"],
     });
     return;
@@ -371,8 +440,8 @@ router.post("/forgot-password", async (req, res) => {
   const body = req.body ?? {};
   const email =
     typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
-  if (!EMAIL_PATTERN.test(email)) {
-    res.status(400).json({ error: "Enter a valid email address", fields: ["email"] });
+  if (!isValidEmail(email)) {
+    res.status(400).json({ error: EMAIL_ERROR, fields: ["email"] });
     return;
   }
 
@@ -416,9 +485,9 @@ router.post("/reset-password", async (req, res) => {
   const token = typeof body.token === "string" ? body.token : "";
   const newPassword = typeof body.newPassword === "string" ? body.newPassword : "";
 
-  if (newPassword.length < MIN_PASSWORD_LENGTH) {
+  if (!isStrongPassword(newPassword)) {
     res.status(400).json({
-      error: `newPassword must be at least ${MIN_PASSWORD_LENGTH} characters`,
+      error: PASSWORD_ERROR,
       fields: ["newPassword"],
     });
     return;

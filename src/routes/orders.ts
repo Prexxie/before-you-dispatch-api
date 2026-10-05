@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
-import { isValidPhone } from "../lib/phone";
+import { PHONE_ERROR, isValidPhone } from "../lib/phone";
 import { vendorOrderView } from "../lib/orderView";
 import { OrderStatus } from "../generated/prisma/client";
 import { startOfLagosDay } from "../lib/lagosDay";
@@ -48,7 +48,7 @@ router.post("/", requireVendor, async (req, res) => {
 
   if (!isValidPhone(customerPhone)) {
     res.status(400).json({
-      error: "customerPhone must be a phone number, e.g. 0803 123 4567",
+      error: PHONE_ERROR,
       fields: ["customerPhone"],
     });
     return;

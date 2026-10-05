@@ -42,15 +42,21 @@ enum Vehicle {
   van
 }
 
-// A rough sense of what the vendor sells, matching the sign-up design's
-// "What do you sell?" options. Not used by any feature logic yet (no
-// category-based filtering or analytics — that's deferred, per CLAUDE.md);
-// just account context for now.
+// What kind of business the vendor runs, matching the sign-up design's
+// "What kind of business do you run?" options (same order as the dropdown;
+// "other" is always last and comes with a free-text categoryOther). Not used
+// by any feature logic yet (no category-based filtering or analytics, which
+// is deferred per CLAUDE.md); just account context for now.
 enum VendorCategory {
-  retail_ecommerce   // "Retail / e-commerce"
-  food_restaurant    // "Food or restaurant"
+  food_restaurant    // "Food / Restaurant"
+  ecommerce          // "E-commerce"
+  retail_store       // "Retail Store"
+  courier_dispatch   // "Courier / Dispatch Service"
+  phones_gadgets     // "Phones and Gadgets"
   pharmacy           // "Pharmacy"
-  delivery_logistics // "Delivery / logistics / dispatch company"
+  fashion_clothing   // "Fashion / Clothing"
+  hair_beauty        // "Hair / Beauty"
+  health_wellness    // "Health / Wellness"
   other              // "Other"
 }
 
@@ -82,6 +88,9 @@ model Vendor {
   // which are what customers and riders see.
   ownerName         String
   category          VendorCategory
+  // The vendor's own words when category is "other"; null for every other
+  // category.
+  categoryOther     String?
   themeColor        ThemeColor      @default(green)
   email             String          @unique
   // Null for an account created with Google and never given a password
@@ -100,6 +109,9 @@ model Rider {
   name     String
   phone    String
   vehicle  Vehicle?
+  // A small photo of the rider, stored as a data URL like Vendor.logoUrl.
+  // Optional.
+  photoUrl String?
   // Deactivating a rider drops them from the create-order "Assign a rider"
   // list without touching their orders or history — a rider who no longer
   // works with this vendor, not a delete (that would orphan past orders).
