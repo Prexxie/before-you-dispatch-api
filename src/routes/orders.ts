@@ -266,6 +266,94 @@ const NOT_DISPATCHABLE_MESSAGES: Partial<Record<OrderStatus, string>> = {
   failed: "This delivery is already finished.",
 };
 
+// PATCH /orders/:id — body { customerName?, customerPhone?, itemDescription? }.
+// Fixes a typo before the customer has answered: only while the order is
+// still awaiting their confirmation. A changed phone number also replaces the
+// customer link, so a link already sent to the wrong number stops working.
+router.patch("/:id", requireVendor, async (req, res) => {
+  const order = await findVendorOrder(req.params.id as string, req.vendorId);
+  if (!order) {
+    res.status(404).json({ error: "Order not found" });
+    return;
+  }
+
+  const body = req.body ?? {};
+  const fields = ["customerName", "customerPhone", "itemDescription"] as const;
+  const empty = fields.filter(
+    (f) => f in body && (typeof body[f] !== "string" || body[f].trim() === ""),
+  );
+  if (empty.length > 0) {
+    res.status(400).json({ error: "Fields can't be empty", fields: empty });
+    return;
+  }
+  const changes: Partial<Record<(typeof fields)[number], string>> = {};
+  for (const f of fields) if (f in body) changes[f] = body[f].trim();
+  if (changes.customerPhone !== undefined && !isValidPhone(changes.customerPhone)) {
+    res.status(400).json({ error: PHONE_ERROR, fields: ["customerPhone"] });
+    return;
+  }
+
+  const phoneChanged =
+    changes.customerPhone !== undefined && changes.customerPhone !== order.customerPhone;
+  const { count } = await prisma.order.updateMany({
+    where: { id: order.id, status: "pending_confirmation" },
+    data: { ...changes, ...(phoneChanged ? { customerToken: randomUUID() } : {}) },
+  });
+  const current = await findVendorOrder(order.id, req.vendorId);
+  if (!current) {
+    res.status(404).json({ error: "Order not found" });
+    return;
+  }
+  if (count === 0) {
+    res.status(409).json({
+      error: "Details can only be changed before the customer answers.",
+      status: current.status,
+    });
+    return;
+  }
+  res.json(vendorOrderView(current));
+});
+
+// PATCH /orders/:id/rider — body { riderId }. The vendor changes their mind
+// about the rider before anything has gone out to them: while the order is
+// awaiting the customer or confirmed but not yet dispatched. The customer's
+// link is untouched; the rider link is replaced, so a link already copied
+// for the previous rider stops working.
+router.patch("/:id/rider", requireVendor, async (req, res) => {
+  const order = await findVendorOrder(req.params.id as string, req.vendorId);
+  if (!order) {
+    res.status(404).json({ error: "Order not found" });
+    return;
+  }
+  if (typeof req.body?.riderId !== "string" || req.body.riderId === "") {
+    res.status(400).json({ error: "riderId is required", fields: ["riderId"] });
+    return;
+  }
+  const riderId = await nextRiderId(req.vendorId, order.riderId, req.body.riderId);
+  if (!riderId) {
+    res.status(400).json({ error: "riderId does not match any rider", fields: ["riderId"] });
+    return;
+  }
+
+  const { count } = await prisma.order.updateMany({
+    where: { id: order.id, status: { in: ["pending_confirmation", "confirmed"] } },
+    data: riderId === order.riderId ? {} : { riderId, riderToken: randomUUID() },
+  });
+  const current = await findVendorOrder(order.id, req.vendorId);
+  if (!current) {
+    res.status(404).json({ error: "Order not found" });
+    return;
+  }
+  if (count === 0) {
+    res.status(409).json({
+      error: "The rider can only be changed before the order is dispatched.",
+      status: current.status,
+    });
+    return;
+  }
+  res.json(vendorOrderView(current));
+});
+
 // POST /orders/:id/dispatch — the vendor sent the rider their link, so the
 // rider is on the way. Only for confirmed orders with a saved pin: the core
 // confirm-before-dispatch rule. Sending again once dispatched is fine.

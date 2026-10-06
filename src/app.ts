@@ -27,6 +27,13 @@ app.use((req, res, next) => {
   next();
 });
 
+// Token links are credentials: keep browsers and proxies from caching the
+// responses behind them.
+app.use((_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  next();
+});
+
 app.use(express.json());
 app.use(cookieParser());
 app.use(routes);
