@@ -314,11 +314,12 @@ router.patch("/:id", requireVendor, async (req, res) => {
   res.json(vendorOrderView(current));
 });
 
-// PATCH /orders/:id/rider — body { riderId }. The vendor changes their mind
-// about the rider before anything has gone out to them: while the order is
-// awaiting the customer or confirmed but not yet dispatched. The customer's
-// link is untouched; the rider link is replaced, so a link already copied
-// for the previous rider stops working.
+// PATCH /orders/:id/rider — body { riderId }. The vendor changes the rider
+// any time before the order leaves with them: while awaiting the customer,
+// confirmed, or dispatched but not yet picked up. The customer's link is
+// untouched; the rider link is always replaced, so a link already sent or
+// copied for the previous rider stops working. A dispatched order goes back
+// to confirmed: the new rider hasn't been sent their link yet.
 router.patch("/:id/rider", requireVendor, async (req, res) => {
   const order = await findVendorOrder(req.params.id as string, req.vendorId);
   if (!order) {
@@ -335,18 +336,31 @@ router.patch("/:id/rider", requireVendor, async (req, res) => {
     return;
   }
 
-  const { count } = await prisma.order.updateMany({
+  const same = riderId === order.riderId;
+  const swap = { riderId, riderToken: randomUUID() };
+  // Two conditional updates so a pickup landing in between can't be undone.
+  const notSent = await prisma.order.updateMany({
     where: { id: order.id, status: { in: ["pending_confirmation", "confirmed"] } },
-    data: riderId === order.riderId ? {} : { riderId, riderToken: randomUUID() },
+    data: same ? {} : swap,
   });
+  const sent =
+    notSent.count === 0
+      ? await prisma.order.updateMany({
+          where: { id: order.id, status: "dispatched", pickedUpAt: null },
+          data: same ? {} : { ...swap, status: "confirmed", dispatchedAt: null },
+        })
+      : { count: 0 };
   const current = await findVendorOrder(order.id, req.vendorId);
   if (!current) {
     res.status(404).json({ error: "Order not found" });
     return;
   }
-  if (count === 0) {
+  if (notSent.count === 0 && sent.count === 0) {
     res.status(409).json({
-      error: "The rider can only be changed before the order is dispatched.",
+      error:
+        current.status === "dispatched"
+          ? "The rider has already picked up the order, so it can't go to a different rider now."
+          : "The rider can only be changed before they pick up the order.",
       status: current.status,
     });
     return;

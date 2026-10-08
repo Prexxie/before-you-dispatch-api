@@ -345,6 +345,15 @@ The vendor sent the rider their link. Moves a `confirmed` order with a saved pin
   - `confirmed` with no pin → `"The customer hasn't shared their location yet."`
   - `delivered` / `failed` → `"This delivery is already finished."`
 
+## `PATCH /orders/:id/rider`
+
+Change the order's rider. **Body:** `{ "riderId": "..." }`, one of the vendor's active riders. Allowed while the order is `pending_confirmation`, `confirmed`, or `dispatched` with no `pickedUpAt` yet. A different rider always gets a new `riderToken`, so the previous rider's link (sent or just copied) stops working: `GET /rider/<old token>` is a `404`. The customer's link doesn't change. A `dispatched` order goes back to `confirmed` (`dispatchedAt: null`), since the new rider hasn't been sent their link yet; sending it dispatches again. Sending the current rider is a no-op `200`.
+
+- `200` → the order, as in `GET /orders/:id`.
+- `400` → `{ "error": "riderId is required" | "riderId does not match any rider", "fields": ["riderId"] }`
+- `404` → `{ "error": "Order not found" }`
+- `409` → `{ "error": "...", "status": "<current status>" }`: `dispatched` and already picked up, or `not_ready` / `delivered` / `failed`.
+
 ---
 
 ## `GET /orders/:customerToken/confirm`
@@ -412,6 +421,8 @@ Public, with no auth. The customer's pin and landmark note (MVP feature 3), plus
 ## `GET /rider/:riderToken`
 
 Public, with no auth. Everything the rider needs in one place (MVP feature 4). Only exists once the customer's pin is saved.
+
+Opening the link counts as sending it: if the order is still `confirmed`, this moves it to `dispatched` and sets `dispatchedAt`, however the vendor got the link to the rider (copied, forwarded, WhatsApp, SMS). The exception is the vendor's own preview: a request carrying that vendor's session cookie changes nothing and gets `"vendorPreview": true` (otherwise `false`).
 
 `location` is `null` until the rider has confirmed pickup (`pickedUpAt`) — withheld by the API, not just hidden on the page. Everything else (who, what, the pickup point) is available straight away.
 

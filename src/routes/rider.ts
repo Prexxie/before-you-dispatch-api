@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma";
 import { UUID_PATTERN } from "../lib/customerToken";
 import { orderLocation } from "../lib/orderView";
 import { vendorDetails } from "../config/env";
+import { vendorIdFromRequest } from "../lib/auth";
 import { FailureReason, OrderStatus } from "../generated/prisma/client";
 
 // Rider handoff (MVP feature 4). Public, no auth: the unguessable riderToken
@@ -25,11 +26,28 @@ async function findJob(token: string) {
 // the pin and the landmark note. `location` withheld until the rider has
 // confirmed pickup — the pin isn't handed over before that, not just hidden
 // in the UI (design: "Rider: Assigned Delivery" shows only the pickup leg).
+//
+// Opening the link counts as the rider being sent out: the vendor may have
+// pasted it anywhere (copied, forwarded), and the only way a rider gets the
+// current token is from the vendor, after the customer confirmed and saved
+// their pin. The vendor previewing their own rider link (signed in) doesn't.
 router.get("/:token", async (req, res) => {
-  const order = await findJob(req.params.token);
+  let order = await findJob(req.params.token);
   if (!order) {
     res.status(404).json({ error: "Delivery not found" });
     return;
+  }
+  const vendorPreview = vendorIdFromRequest(req) === order.vendorId;
+  if (order.status === "confirmed" && !vendorPreview) {
+    await prisma.order.updateMany({
+      where: { id: order.id, status: "confirmed", riderToken: order.riderToken },
+      data: { status: "dispatched", dispatchedAt: new Date() },
+    });
+    order = await findJob(req.params.token);
+    if (!order) {
+      res.status(404).json({ error: "Delivery not found" });
+      return;
+    }
   }
   res.json({
     orderNumber: order.orderNumber,
@@ -51,6 +69,9 @@ router.get("/:token", async (req, res) => {
     // only complete the delivery after that.
     receivedAt: order.receivedAt,
     deliveryConfirmedBy: order.deliveryConfirmedBy,
+    // The vendor opened their own rider link while signed in: shown as a
+    // preview, and it didn't count as sending it.
+    vendorPreview,
   });
 });
 
