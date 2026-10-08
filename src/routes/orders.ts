@@ -90,6 +90,23 @@ const STATUS_COUNT_KEY: Record<OrderStatus, string> = {
   failed: "failed",
 };
 
+// "Needs your attention": orders active today that are waiting on the
+// vendor (customer ready with a pin and no rider sent yet, a rider who
+// declined, a failed delivery, a customer's "Not now"). Older ones are left
+// out on purpose: same-day deliveries, so a failure from last week isn't
+// today's to-do. Shared by the dashboard list and the count on every page.
+function needsAttention(vendorId: string) {
+  return {
+    vendorId,
+    updatedAt: { gte: startOfLagosDay() },
+    OR: [
+      { status: "confirmed" as const, lat: { not: null } },
+      { status: "failed" as const },
+      { status: "not_ready" as const },
+    ],
+  };
+}
+
 // GET /orders — every order (not just today's — a vendor with a handful of
 // orders this week shouldn't see an empty dashboard because none of them
 // landed today), most recently active first (any status change bumps an
@@ -146,19 +163,8 @@ router.get("/", requireVendor, async (req, res) => {
       where: { vendorId: req.vendorId, createdAt: { gte: dayStart } },
       select: { status: true },
     }),
-    // "Needs your attention": orders active today that are waiting on the vendor,
-    // oldest waiting first. Older ones are left out on purpose (same-day
-    // deliveries; a failure from last week isn't today's to-do).
     prisma.order.findMany({
-      where: {
-        vendorId: req.vendorId,
-        updatedAt: { gte: dayStart },
-        OR: [
-          { status: "confirmed", lat: { not: null } },
-          { status: "failed" },
-          { status: "not_ready" },
-        ],
-      },
+      where: needsAttention(req.vendorId),
       include: { rider: true },
       orderBy: { updatedAt: "asc" },
     }),
@@ -208,6 +214,17 @@ router.get("/", requireVendor, async (req, res) => {
       declinedRiderName: o.declinedRiderName,
       failureReason: o.failureReason,
       since: o.updatedAt,
+      // For "ready_to_send", what the card needs to send the rider link on
+      // WhatsApp itself (the same message as the order page). Null otherwise.
+      send:
+        o.status === "confirmed"
+          ? {
+              riderToken: o.riderToken,
+              riderPhone: o.rider.phone,
+              itemDescription: o.itemDescription,
+              attempt: o.attempt,
+            }
+          : null,
     })),
     needsYouTotal: waiting.length,
     page,
@@ -233,6 +250,14 @@ router.get("/", requireVendor, async (req, res) => {
       updatedAt: o.updatedAt,
     })),
   });
+});
+
+// GET /orders/attention — just how many orders need the vendor's attention
+// (see needsAttention). Polled by the sidebar on every vendor page for the
+// count on the Dashboard link and in the tab title.
+router.get("/attention", requireVendor, async (req, res) => {
+  const total = await prisma.order.count({ where: needsAttention(req.vendorId) });
+  res.json({ total });
 });
 
 // Order ids are cuids; anything else is a customer token or junk.

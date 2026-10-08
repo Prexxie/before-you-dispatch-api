@@ -262,7 +262,11 @@ All four fields are required, non-empty strings (surrounding whitespace is trimm
 
 "Recent" means `updatedAt`, not `createdAt`: any status change (confirmed, pin saved, dispatched, picked up, received, completed) bumps an order back to the top, so what the vendor acted on or heard about most recently is always visible without scrolling. `updatedAt` is set automatically by the database on every write.
 
-**Needs your attention (added 8 Oct 2026):** the response also has `needsYou` (at most 6) and `needsYouTotal`: orders active today (`updatedAt` today, Nigeria time) that are waiting on the vendor, oldest first. Each is `{ id, orderNumber, customerName, riderName, kind, declinedRiderName, failureReason, since }`, where `kind` is `"ready_to_send"` (confirmed with a pin, rider not sent), `"rider_declined"` (confirmed after the rider declined), `"failed"` or `"customer_declined"` (`not_ready`). Orders waiting on the customer or rider aren't included. Not affected by `status`, `today` or `page`.
+**Needs your attention (added 8 Oct 2026):** the response also has `needsYou` (at most 6) and `needsYouTotal`: orders active today (`updatedAt` today, Nigeria time) that are waiting on the vendor, oldest first. Each is `{ id, orderNumber, customerName, riderName, kind, declinedRiderName, failureReason, since }`, where `kind` is `"ready_to_send"` (confirmed with a pin, rider not sent), `"rider_declined"` (confirmed after the rider declined), `"failed"` or `"customer_declined"` (`not_ready`). Orders waiting on the customer or rider aren't included. Not affected by `status`, `today` or `page`. For `ready_to_send` rows, `send` is `{ riderToken, riderPhone, itemDescription, attempt }` so the dashboard can send the rider link on WhatsApp from the card; `null` for the other kinds.
+
+## `GET /orders/attention`
+
+Vendor only. `200` → `{ "total": 3 }`: how many orders need the vendor's attention (the same rule as `needsYou` above). Polled every 15 s by every vendor page for the count on the Dashboard link and in the browser tab title.
 
 **`today=true` (optional, added 8 Oct 2026):** only orders created today, the same set the `today` stat counts use, so a tapped stat tile lists exactly the orders behind its number. Combines with `status`.
 
