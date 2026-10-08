@@ -69,6 +69,14 @@ The customer (`/orders/:customerToken/...`) and rider (`/rider/:riderToken/...`)
 - `400` `{ "error": "...", "fields": [...] }`
 - `409` `{ "error": "An account with this email already exists", "fields": ["email"] }`
 
+### `POST /auth/check-email`
+
+**Body** `{ "email": "..." }`. Used by the sign-up form to flag an email that is already registered as soon as it is typed, before the rest of the form is filled in.
+
+- `200` `{ "taken": false }`
+- `200` `{ "taken": true, "code": "email_taken" }` — or `"google_account"` if that account only has Google sign-in (same codes as the `409` from `POST /auth/signup`)
+- `400` `{ "error": "Enter a valid email address", "fields": ["email"] }`
+
 ### `POST /auth/login`
 
 **Body** `{ "email": "...", "password": "..." }`

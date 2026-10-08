@@ -157,6 +157,29 @@ router.post("/signup", async (req, res) => {
   res.status(201).json(vendorView(vendor));
 });
 
+// POST /auth/check-email — body { email }. Lets the sign-up form say "already
+// registered" as soon as the email is typed, before the vendor fills in the
+// rest. -> { taken: false } or { taken: true, code } where code is the same
+// "email_taken" / "google_account" that POST /auth/signup answers with. (Sign-up's
+// 409 already reveals this, so it tells a caller nothing new.)
+router.post("/check-email", async (req, res) => {
+  const email =
+    typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+  if (!isValidEmail(email)) {
+    res.status(400).json({ error: EMAIL_ERROR, fields: ["email"] });
+    return;
+  }
+  const existing = await prisma.vendor.findUnique({ where: { email } });
+  if (!existing) {
+    res.json({ taken: false });
+    return;
+  }
+  res.json({
+    taken: true,
+    code: existing.passwordHash === null && existing.googleId ? "google_account" : "email_taken",
+  });
+});
+
 // POST /auth/login — body { email, password }.
 router.post("/login", async (req, res) => {
   const body = req.body ?? {};
