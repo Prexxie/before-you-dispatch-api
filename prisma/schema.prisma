@@ -166,6 +166,7 @@ model Order {
   confirmedAt         DateTime? // when the customer tapped "I'm ready" (or, later, "Actually, I'm ready")
   notReadyAt          DateTime? // when the customer tapped "Not now"
   dispatchedAt        DateTime? // when the vendor sent the rider link
+  acceptedAt          DateTime? // when the rider tapped "Accept Delivery"
   pickedUpAt          DateTime? // when the rider confirmed they collected the order
   arrivedAt           DateTime? // when the rider tapped "I've arrived" at the customer's location
   receivedAt          DateTime? // when the customer tapped "I've received my delivery"
@@ -183,17 +184,33 @@ model Order {
   // Set when the vendor retriggers an order the customer declined, so the
   // follow-up message can acknowledge the earlier "Not now". Null otherwise.
   retriggeredAt DateTime?
+  // Set when the rider tapped "I can't take it": the order went back to
+  // confirmed for the vendor to pick another rider. The name is kept as it was
+  // then, for the vendor's "Tunde can't take this delivery". Cleared once the
+  // vendor changes the rider or sends the link again.
+  riderDeclinedAt   DateTime?
+  declinedRiderName String?
 
   @@index([riderId])
   @@index([vendorId])
 }
 
-// A failed delivery attempt, kept when the vendor redelivers the order (the
-// order itself is reset for the next attempt). Read-only history.
+// How an earlier round of an order ended.
+enum AttemptOutcome {
+  failed // the rider couldn't deliver; kept when the vendor redelivers
+  declined // the customer said "Not now"; kept when the vendor retriggers
+}
+
+// An earlier round of an order, kept when the vendor starts it again (the
+// order itself is reset): a failed delivery (redeliver) or a customer's
+// "Not now" (retrigger). Read-only history.
 model OrderAttempt {
   id            String         @id @default(cuid())
   orderId       String
   order         Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  outcome       AttemptOutcome @default(failed)
+  // The delivery attempt it belonged to. A decline doesn't use one up (no
+  // rider went out), so it shares the number of the attempt that follows.
   attemptNumber Int
   riderId       String
   rider         Rider          @relation(fields: [riderId], references: [id])
@@ -202,6 +219,7 @@ model OrderAttempt {
   dispatchedAt  DateTime?
   pickedUpAt    DateTime?
   arrivedAt     DateTime?
+  // When it ended: the rider marked it failed, or the customer said "Not now".
   failedAt      DateTime?
   // Where the customer had asked to be found on that attempt.
   lat           Float?

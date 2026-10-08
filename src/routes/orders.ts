@@ -78,6 +78,8 @@ router.post("/", requireVendor, async (req, res) => {
 
 const ORDER_STATUSES = Object.values(OrderStatus);
 const PAGE_SIZE = 20;
+// "Needs your attention" shows at most this many; the rest are counted.
+const NEEDS_YOU_LIMIT = 6;
 
 const STATUS_COUNT_KEY: Record<OrderStatus, string> = {
   pending_confirmation: "awaitingConfirmation",
@@ -87,6 +89,23 @@ const STATUS_COUNT_KEY: Record<OrderStatus, string> = {
   delivered: "delivered",
   failed: "failed",
 };
+
+// "Needs your attention": orders active today that are waiting on the
+// vendor (customer ready with a pin and no rider sent yet, a rider who
+// declined, a failed delivery, a customer's "Not now"). Older ones are left
+// out on purpose: same-day deliveries, so a failure from last week isn't
+// today's to-do. Shared by the dashboard list and the count on every page.
+function needsAttention(vendorId: string) {
+  return {
+    vendorId,
+    updatedAt: { gte: startOfLagosDay() },
+    OR: [
+      { status: "confirmed" as const, lat: { not: null } },
+      { status: "failed" as const },
+      { status: "not_ready" as const },
+    ],
+  };
+}
 
 // GET /orders — every order (not just today's — a vendor with a handful of
 // orders this week shouldn't see an empty dashboard because none of them
@@ -111,14 +130,21 @@ router.get("/", requireVendor, async (req, res) => {
     return;
   }
   const status = statusParam as OrderStatus | undefined;
-  const where = status
-    ? { status, vendorId: req.vendorId }
-    : { vendorId: req.vendorId };
+  // ?today=true narrows the list to orders created today (Nigeria time), the
+  // same set the "today" stat tiles count, so tapping a tile lists exactly
+  // the orders behind its number.
+  const todayOnly = req.query.today === "true";
+  const dayStart = startOfLagosDay();
+  const where = {
+    vendorId: req.vendorId,
+    ...(status ? { status } : {}),
+    ...(todayOnly ? { createdAt: { gte: dayStart } } : {}),
+  };
 
   const pageParam = Number(req.query.page);
   const page = Number.isInteger(pageParam) && pageParam > 0 ? pageParam : 1;
 
-  const [vendor, total, orders, statusGroups, todayOrders] = await Promise.all([
+  const [vendor, total, orders, statusGroups, todayOrders, waiting] = await Promise.all([
     prisma.vendor.findUniqueOrThrow({ where: { id: req.vendorId } }),
     prisma.order.count({ where }),
     prisma.order.findMany({
@@ -134,8 +160,13 @@ router.get("/", requireVendor, async (req, res) => {
       _count: { _all: true },
     }),
     prisma.order.findMany({
-      where: { vendorId: req.vendorId, createdAt: { gte: startOfLagosDay() } },
+      where: { vendorId: req.vendorId, createdAt: { gte: dayStart } },
       select: { status: true },
+    }),
+    prisma.order.findMany({
+      where: needsAttention(req.vendorId),
+      include: { rider: true },
+      orderBy: { updatedAt: "asc" },
     }),
   ]);
 
@@ -165,6 +196,37 @@ router.get("/", requireVendor, async (req, res) => {
       delivered: todayCount("delivered"),
     },
     counts,
+    needsYou: waiting.slice(0, NEEDS_YOU_LIMIT).map((o) => ({
+      id: o.id,
+      orderNumber: o.orderNumber,
+      customerName: o.customerName,
+      riderName: o.rider.name,
+      // What the vendor has to do: send the rider link, pick another rider,
+      // redeliver, or ask the customer again.
+      kind:
+        o.status === "failed"
+          ? "failed"
+          : o.status === "not_ready"
+            ? "customer_declined"
+            : o.riderDeclinedAt
+              ? "rider_declined"
+              : "ready_to_send",
+      declinedRiderName: o.declinedRiderName,
+      failureReason: o.failureReason,
+      since: o.updatedAt,
+      // For "ready_to_send", what the card needs to send the rider link on
+      // WhatsApp itself (the same message as the order page). Null otherwise.
+      send:
+        o.status === "confirmed"
+          ? {
+              riderToken: o.riderToken,
+              riderPhone: o.rider.phone,
+              itemDescription: o.itemDescription,
+              attempt: o.attempt,
+            }
+          : null,
+    })),
+    needsYouTotal: waiting.length,
     page,
     pageSize: PAGE_SIZE,
     totalPages: Math.max(1, Math.ceil(total / PAGE_SIZE)),
@@ -177,14 +239,25 @@ router.get("/", requireVendor, async (req, res) => {
       status: o.status,
       hasLocation: o.lat != null,
       pickedUpAt: o.pickedUpAt,
+      acceptedAt: o.acceptedAt,
       arrivedAt: o.arrivedAt,
       receivedAt: o.receivedAt,
+      riderDeclinedAt: o.riderDeclinedAt,
+      declinedRiderName: o.declinedRiderName,
       failureReason: o.failureReason,
       deliveryConfirmedBy: o.deliveryConfirmedBy,
       createdAt: o.createdAt,
       updatedAt: o.updatedAt,
     })),
   });
+});
+
+// GET /orders/attention — just how many orders need the vendor's attention
+// (see needsAttention). Polled by the sidebar on every vendor page for the
+// count on the Dashboard link and in the tab title.
+router.get("/attention", requireVendor, async (req, res) => {
+  const total = await prisma.order.count({ where: needsAttention(req.vendorId) });
+  res.json({ total });
 });
 
 // Order ids are cuids; anything else is a customer token or junk.
@@ -197,7 +270,8 @@ function findVendorOrder(id: string, vendorId: string) {
     include: {
       rider: true,
       vendor: true,
-      attempts: { include: { rider: true }, orderBy: { attemptNumber: "asc" } },
+      // Oldest first: declines and failed deliveries in the order they ended.
+      attempts: { include: { rider: true }, orderBy: { createdAt: "asc" } },
     },
   });
 }
@@ -244,6 +318,9 @@ function freshStart(riderId: string) {
     locationAddress: null,
     locationSavedAt: null,
     retriggeredAt: null,
+    acceptedAt: null,
+    riderDeclinedAt: null,
+    declinedRiderName: null,
   };
 }
 
@@ -315,11 +392,11 @@ router.patch("/:id", requireVendor, async (req, res) => {
 });
 
 // PATCH /orders/:id/rider — body { riderId }. The vendor changes the rider
-// any time before the order leaves with them: while awaiting the customer,
-// confirmed, or dispatched but not yet picked up. The customer's link is
-// untouched; the rider link is always replaced, so a link already sent or
-// copied for the previous rider stops working. A dispatched order goes back
-// to confirmed: the new rider hasn't been sent their link yet.
+// before the link has gone out to them: while awaiting the customer or
+// confirmed (including after a rider declined). Once the
+// link is sent it's the rider's call: "Decline Delivery" hands the order
+// back. The customer's link is untouched; the rider link is replaced, so a
+// link already copied for the previous rider stops working.
 router.patch("/:id/rider", requireVendor, async (req, res) => {
   const order = await findVendorOrder(req.params.id as string, req.vendorId);
   if (!order) {
@@ -337,30 +414,30 @@ router.patch("/:id/rider", requireVendor, async (req, res) => {
   }
 
   const same = riderId === order.riderId;
-  const swap = { riderId, riderToken: randomUUID() };
-  // Two conditional updates so a pickup landing in between can't be undone.
-  const notSent = await prisma.order.updateMany({
+  // The new rider hasn't accepted anything yet, and a decline from
+  // the previous rider is dealt with.
+  const swap = {
+    riderId,
+    riderToken: randomUUID(),
+    acceptedAt: null,
+    riderDeclinedAt: null,
+    declinedRiderName: null,
+  };
+  const { count } = await prisma.order.updateMany({
     where: { id: order.id, status: { in: ["pending_confirmation", "confirmed"] } },
     data: same ? {} : swap,
   });
-  const sent =
-    notSent.count === 0
-      ? await prisma.order.updateMany({
-          where: { id: order.id, status: "dispatched", pickedUpAt: null },
-          data: same ? {} : { ...swap, status: "confirmed", dispatchedAt: null },
-        })
-      : { count: 0 };
   const current = await findVendorOrder(order.id, req.vendorId);
   if (!current) {
     res.status(404).json({ error: "Order not found" });
     return;
   }
-  if (notSent.count === 0 && sent.count === 0) {
+  if (count === 0) {
     res.status(409).json({
       error:
         current.status === "dispatched"
-          ? "The rider has already picked up the order, so it can't go to a different rider now."
-          : "The rider can only be changed before they pick up the order.",
+          ? "The link has already gone to the rider. If they can't go, they can decline it from their link and you'll pick another rider."
+          : "The rider can only be changed before the link is sent.",
       status: current.status,
     });
     return;
@@ -380,7 +457,14 @@ router.post("/:id/dispatch", requireVendor, async (req, res) => {
 
   const { count } = await prisma.order.updateMany({
     where: { id: order.id, status: "confirmed", lat: { not: null } },
-    data: { status: "dispatched", dispatchedAt: new Date() },
+    // Sending the link again after a rider declined (the
+    // vendor kept them) clears that notice.
+    data: {
+      status: "dispatched",
+      dispatchedAt: new Date(),
+      riderDeclinedAt: null,
+      declinedRiderName: null,
+    },
   });
 
   const current = await findVendorOrder(order.id, req.vendorId);
@@ -442,7 +526,9 @@ router.post("/:id/delivered", requireVendor, async (req, res) => {
 // declined ("Not now" + confirmed the warning): issues a NEW customer link
 // and puts the order back to awaiting confirmation for a fresh start. The
 // vendor sends the new link (customerToken in the response); the old one
-// stays closed. The vendor decides the delivery is going out today.
+// stays closed. The vendor decides the delivery is going out today. The
+// decline is kept in the order's history (outcome "declined"); `attempt`
+// doesn't go up, since no rider went out.
 router.post("/:id/retrigger", requireVendor, async (req, res) => {
   const order = await findVendorOrder(req.params.id as string, req.vendorId);
   if (!order) {
@@ -455,16 +541,30 @@ router.post("/:id/retrigger", requireVendor, async (req, res) => {
     return;
   }
 
-  const { count } = await prisma.order.updateMany({
-    where: { id: order.id, status: "not_ready" },
-    data: { ...freshStart(riderId), retriggeredAt: new Date() },
+  const retriggered = await prisma.$transaction(async (tx) => {
+    // Conditional on status so two taps can't both record the decline.
+    const { count } = await tx.order.updateMany({
+      where: { id: order.id, status: "not_ready" },
+      data: { ...freshStart(riderId), retriggeredAt: new Date() },
+    });
+    if (count === 0) return false;
+    await tx.orderAttempt.create({
+      data: {
+        orderId: order.id,
+        outcome: "declined",
+        attemptNumber: order.attempt,
+        riderId: order.riderId,
+        failedAt: order.notReadyAt,
+      },
+    });
+    return true;
   });
   const current = await findVendorOrder(order.id, req.vendorId);
   if (!current) {
     res.status(404).json({ error: "Order not found" });
     return;
   }
-  if (count === 0) {
+  if (!retriggered) {
     res.status(409).json({
       error: "Only an order the customer declined can be retriggered.",
       status: current.status,
@@ -502,6 +602,7 @@ router.post("/:id/redeliver", requireVendor, async (req, res) => {
     await tx.orderAttempt.create({
       data: {
         orderId: order.id,
+        outcome: "failed",
         attemptNumber: order.attempt,
         riderId: order.riderId,
         failureReason: order.failureReason,

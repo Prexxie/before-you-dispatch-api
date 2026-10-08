@@ -1,9 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { UUID_PATTERN } from "../lib/customerToken";
 import { orderLocation } from "../lib/orderView";
 import { vendorDetails } from "../config/env";
-import { vendorIdFromRequest } from "../lib/auth";
 import { FailureReason, OrderStatus } from "../generated/prisma/client";
 
 // Rider handoff (MVP feature 4). Public, no auth: the unguessable riderToken
@@ -26,28 +26,13 @@ async function findJob(token: string) {
 // the pin and the landmark note. `location` withheld until the rider has
 // confirmed pickup — the pin isn't handed over before that, not just hidden
 // in the UI (design: "Rider: Assigned Delivery" shows only the pickup leg).
-//
-// Opening the link counts as the rider being sent out: the vendor may have
-// pasted it anywhere (copied, forwarded), and the only way a rider gets the
-// current token is from the vendor, after the customer confirmed and saved
-// their pin. The vendor previewing their own rider link (signed in) doesn't.
+// Until `acceptedAt` is set the page asks the rider to accept the job or say
+// decline it (design: "Rider: Accept or Decline").
 router.get("/:token", async (req, res) => {
-  let order = await findJob(req.params.token);
+  const order = await findJob(req.params.token);
   if (!order) {
     res.status(404).json({ error: "Delivery not found" });
     return;
-  }
-  const vendorPreview = vendorIdFromRequest(req) === order.vendorId;
-  if (order.status === "confirmed" && !vendorPreview) {
-    await prisma.order.updateMany({
-      where: { id: order.id, status: "confirmed", riderToken: order.riderToken },
-      data: { status: "dispatched", dispatchedAt: new Date() },
-    });
-    order = await findJob(req.params.token);
-    if (!order) {
-      res.status(404).json({ error: "Delivery not found" });
-      return;
-    }
   }
   res.json({
     orderNumber: order.orderNumber,
@@ -62,6 +47,8 @@ router.get("/:token", async (req, res) => {
     vendorName: order.vendor.businessName,
     // The pickup point.
     vendor: vendorDetails(order.vendor),
+    // Set once the rider taps "Accept Delivery".
+    acceptedAt: order.acceptedAt,
     pickedUpAt: order.pickedUpAt,
     // Set once the rider taps "I've arrived" at the customer's location.
     arrivedAt: order.arrivedAt,
@@ -69,10 +56,100 @@ router.get("/:token", async (req, res) => {
     // only complete the delivery after that.
     receivedAt: order.receivedAt,
     deliveryConfirmedBy: order.deliveryConfirmedBy,
-    // The vendor opened their own rider link while signed in: shown as a
-    // preview, and it didn't count as sending it.
-    vendorPreview,
   });
+});
+
+const NOT_ANSWERABLE_MESSAGES: Partial<Record<OrderStatus, string>> = {
+  delivered: "This delivery is already finished.",
+  failed: "This delivery is already finished.",
+};
+
+// POST /rider/:token/accept — the rider takes the job. Sets `acceptedAt`. The
+// link only exists once the customer confirmed and saved their pin, and only
+// the vendor hands it out, so a rider accepting an order that's still
+// `confirmed` (the vendor pasted the link without the send buttons) moves it
+// to `dispatched` too. Tapping again is harmless.
+router.post("/:token/accept", async (req, res) => {
+  const order = await findJob(req.params.token);
+  if (!order) {
+    res.status(404).json({ error: "Delivery not found" });
+    return;
+  }
+
+  const now = new Date();
+  const answered = { acceptedAt: now, riderDeclinedAt: null, declinedRiderName: null };
+  const fromConfirmed = await prisma.order.updateMany({
+    where: { id: order.id, riderToken: order.riderToken, status: "confirmed" },
+    data: { ...answered, status: "dispatched", dispatchedAt: now },
+  });
+  if (fromConfirmed.count === 0) {
+    await prisma.order.updateMany({
+      where: { id: order.id, riderToken: order.riderToken, status: "dispatched", acceptedAt: null },
+      data: answered,
+    });
+  }
+
+  const current = await prisma.order.findUnique({ where: { id: order.id } });
+  if (!current || current.riderToken !== order.riderToken) {
+    res.status(404).json({ error: "Delivery not found" });
+    return;
+  }
+  if (current.acceptedAt === null) {
+    res.status(409).json({
+      error:
+        NOT_ANSWERABLE_MESSAGES[current.status] ??
+        "This delivery can't be accepted right now.",
+      status: current.status,
+    });
+    return;
+  }
+  res.json({ acceptedAt: current.acceptedAt, status: current.status });
+});
+
+// POST /rider/:token/decline — "Decline Delivery". Only before pickup (after
+// that it's a failed delivery with a reason). The order goes back to
+// `confirmed` for the vendor to pick another rider, the rider link is
+// replaced so this one stops working, and the vendor's page says who
+// declined. The customer's link and pin are untouched. No reason asked.
+router.post("/:token/decline", async (req, res) => {
+  const order = await findJob(req.params.token);
+  if (!order) {
+    res.status(404).json({ error: "Delivery not found" });
+    return;
+  }
+
+  const { count } = await prisma.order.updateMany({
+    where: {
+      id: order.id,
+      riderToken: order.riderToken,
+      status: { in: ["confirmed", "dispatched"] },
+      pickedUpAt: null,
+    },
+    data: {
+      status: "confirmed",
+      riderToken: randomUUID(),
+      dispatchedAt: null,
+      acceptedAt: null,
+      riderDeclinedAt: new Date(),
+      declinedRiderName: order.rider.name,
+    },
+  });
+  if (count === 0) {
+    const current = await prisma.order.findUnique({ where: { id: order.id } });
+    if (!current || current.riderToken !== order.riderToken) {
+      res.status(404).json({ error: "Delivery not found" });
+      return;
+    }
+    res.status(409).json({
+      error: current.pickedUpAt
+        ? "You've already picked up this order. If you can't deliver it, mark it as failed instead."
+        : (NOT_ANSWERABLE_MESSAGES[current.status] ??
+          "This delivery can't be declined right now."),
+      status: current.status,
+    });
+    return;
+  }
+  res.json({ declined: true });
 });
 
 const NOT_PICKUPABLE_MESSAGES: Partial<Record<OrderStatus, string>> = {
@@ -93,10 +170,11 @@ router.post("/:token/pickup", async (req, res) => {
     return;
   }
 
+  // Picking up implies accepting, for a rider whose page skipped that step.
   const pickedUpAt = new Date();
   await prisma.order.updateMany({
     where: { id: order.id, status: "dispatched", pickedUpAt: null },
-    data: { pickedUpAt },
+    data: { pickedUpAt, ...(order.acceptedAt ? {} : { acceptedAt: pickedUpAt }) },
   });
 
   const current = await prisma.order.findUnique({ where: { id: order.id } });
