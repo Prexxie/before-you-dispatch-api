@@ -70,7 +70,7 @@ router.get("/:token/confirm", async (req, res) => {
   const lastAttempt =
     order.attempt > 1
       ? await prisma.orderAttempt.findFirst({
-          where: { orderId: order.id },
+          where: { orderId: order.id, outcome: "failed" },
           orderBy: { attemptNumber: "desc" },
         })
       : null;

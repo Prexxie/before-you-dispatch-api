@@ -63,7 +63,7 @@ Left out on purpose for the six-week build. Only touch these if explicitly asked
 1. **Vendor creates the order.** Enters the customer's name, phone number, and what's being delivered, then assigns a rider.
 2. **Customer gets a link.** Sent by WhatsApp or SMS. They tap it and see: "I'm ready" or "Not now."
 3. **Customer confirms and shares location.** If ready, they drop a pin on a map and add a short landmark note.
-4. **Details move to the rider.** The rider gets their own link showing the customer's confirmed availability, the pin, and the landmark note, all in one place.
+4. **Details move to the rider.** The rider gets their own link showing the customer's confirmed availability, the pin, and the landmark note, all in one place. The rider first taps "Accept Delivery" or "Decline Delivery". If they decline, the order goes back to the vendor to pick another rider, and the old rider link stops working. (Added 8 Oct 2026.)
 5. **Rider makes the delivery.** Using the pin and note to find the customer directly, no back-and-forth calls needed.
 6. **Customer confirms receipt, rider completes.** When the items are in their hands, the customer taps "I've received my delivery" on their link; only then can the rider mark the delivery completed. If the customer can't confirm (no data, phone off, received by someone else), the vendor can mark it delivered from the order page. Until the customer confirms receipt, the rider can instead mark it failed with a preset reason (customer unavailable, couldn't find address, and so on). (Changed 28 Sep 2026.)
 7. **Vendor sees it live.** The dashboard updates automatically: confirmed, dispatched, delivered, or failed with a reason.

@@ -19,7 +19,8 @@ export function orderLocation(order: Order) {
 type OrderForVendor = Order & {
   rider: Rider;
   vendor: Vendor;
-  // Earlier failed attempts, oldest first. Only loaded for the single-order view.
+  // Earlier rounds (failed deliveries and customer declines), oldest first.
+  // Only loaded for the single-order view.
   attempts?: (OrderAttempt & { rider: Rider })[];
 };
 
@@ -38,6 +39,9 @@ export function vendorOrderView(order: OrderForVendor) {
     // When the vendor retriggered a declined order (null if never).
     retriggeredAt: order.retriggeredAt,
     attempts: (order.attempts ?? []).map((a) => ({
+      // "failed" (the rider couldn't deliver) or "declined" (the customer
+      // said "Not now"; `failedAt` is when, and there's no reason or pin).
+      outcome: a.outcome,
       attemptNumber: a.attemptNumber,
       riderName: a.rider.name,
       failureReason: a.failureReason,
@@ -66,6 +70,8 @@ export function vendorOrderView(order: OrderForVendor) {
     notReadyAt: order.notReadyAt,
     locationSavedAt: order.locationSavedAt,
     dispatchedAt: order.dispatchedAt,
+    // Set when the rider tapped "Accept Delivery".
+    acceptedAt: order.acceptedAt,
     pickedUpAt: order.pickedUpAt,
     arrivedAt: order.arrivedAt,
     receivedAt: order.receivedAt,
@@ -73,6 +79,10 @@ export function vendorOrderView(order: OrderForVendor) {
     failureReason: order.failureReason,
     failureNote: order.failureNote,
     deliveryConfirmedBy: order.deliveryConfirmedBy,
+    // Set when the rider tapped "Decline Delivery" and the vendor hasn't
+    // picked another rider (or resent the link) yet.
+    riderDeclinedAt: order.riderDeclinedAt,
+    declinedRiderName: order.declinedRiderName,
     vendor: vendorDetails(order.vendor),
   };
 }

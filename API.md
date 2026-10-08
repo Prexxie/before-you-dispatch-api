@@ -15,7 +15,8 @@ pending_confirmation ─┬─> confirmed ──(pin saved, vendor sends rider l
 - `not_ready` means the customer chose "Not now" **and** confirmed the warning: it's final for that link (the link is closed). The vendor can `POST /orders/:id/retrigger` to issue a new link and start fresh.
 - A `failed` order can be redelivered by the vendor (`POST /orders/:id/redeliver`): the failed attempt is kept in the order's history (`attempts`), `attempt` goes up, and the order returns to `pending_confirmation` with new customer and rider links, so the customer confirms again. Both actions are vendor-triggered; there is no customer-facing reschedule link (deferred in CLAUDE.md).
 - An order is only dispatched once it's `confirmed` **and** has a saved pin (the confirm-before-dispatch rule).
-- Every transition has its own timestamp, so the full timeline can be shown without guessing from `status` alone: `confirmedAt`, `notReadyAt`, `locationSavedAt`, `dispatchedAt`, `pickedUpAt`, `arrivedAt`, `receivedAt`, `completedAt`.
+- Every transition has its own timestamp, so the full timeline can be shown without guessing from `status` alone: `confirmedAt`, `notReadyAt`, `locationSavedAt`, `dispatchedAt`, `acceptedAt`, `pickedUpAt`, `arrivedAt`, `receivedAt`, `completedAt`.
+- Accepting comes between dispatch and pickup (added 8 Oct 2026): the rider's page first asks "Accept Delivery" or "Decline Delivery". Accepting sets `acceptedAt`. Declining (only before pickup) puts the order back to `confirmed` with a new rider link, and sets `riderDeclinedAt` and `declinedRiderName` so the vendor sees who declined; those clear when the vendor changes the rider or sends the link again. See `POST /rider/:riderToken/accept` and `/decline`.
 - Picking up is a rider-only step, separate from dispatch: the rider's pin and landmark note (`GET /rider/:riderToken`) are withheld until `pickedUpAt` is set, not just hidden in the UI. It's informational for sequencing, not a hard gate on the outcome endpoint — a rider who forgets to tap "picked up" can still mark the delivery completed or failed.
 - "I've arrived" (`arrivedAt`) is the same kind of step: purely informational, requires pickup first, doesn't gate or unlock anything else, and tapping it again is harmless.
 - Completing a delivery needs the customer's receipt first (`receivedAt`). If the customer can't confirm, the vendor can mark it delivered (`deliveryConfirmedBy: "vendor"`). The rider can only mark it failed *before* the customer confirms receipt.
@@ -261,6 +262,10 @@ All four fields are required, non-empty strings (surrounding whitespace is trimm
 
 "Recent" means `updatedAt`, not `createdAt`: any status change (confirmed, pin saved, dispatched, picked up, received, completed) bumps an order back to the top, so what the vendor acted on or heard about most recently is always visible without scrolling. `updatedAt` is set automatically by the database on every write.
 
+**Needs your attention (added 8 Oct 2026):** the response also has `needsYou` (at most 6) and `needsYouTotal`: orders active today (`updatedAt` today, Nigeria time) that are waiting on the vendor, oldest first. Each is `{ id, orderNumber, customerName, riderName, kind, declinedRiderName, failureReason, since }`, where `kind` is `"ready_to_send"` (confirmed with a pin, rider not sent), `"rider_declined"` (confirmed after the rider declined), `"failed"` or `"customer_declined"` (`not_ready`). Orders waiting on the customer or rider aren't included. Not affected by `status`, `today` or `page`.
+
+**`today=true` (optional, added 8 Oct 2026):** only orders created today, the same set the `today` stat counts use, so a tapped stat tile lists exactly the orders behind its number. Combines with `status`.
+
 **Query parameters (both optional):**
 - `status`: one of the order statuses (below), returns only that status. Anything else is a `400`.
 - `page`: 1-based; anything else falls back to `1`.
@@ -324,8 +329,11 @@ One order as the vendor sees it (vendor side; `id` is the order's `id`, never a 
   "location": { "lat": 6.6018, "lng": 3.3515, "landmarkNote": "Blue gate, opposite the pharmacy", "address": "5, Temidire Street, Mafoluku, Oshodi, Lagos" },
   "riderToken": "5f0c3c2e-8f1d-4d7a-9a55-0b3f1f6f2c11",
   "dispatchedAt": null,
+  "acceptedAt": null,
   "completedAt": null,
-  "failureReason": null
+  "failureReason": null,
+  "riderDeclinedAt": null,
+  "declinedRiderName": null
 }
 ```
 
@@ -335,7 +343,7 @@ One order as the vendor sees it (vendor side; `id` is the order's `id`, never a 
 
 ## `POST /orders/:id/dispatch`
 
-The vendor sent the rider their link. Moves a `confirmed` order with a saved pin to `dispatched` and sets `dispatchedAt`. No body.
+The vendor sent the rider their link. Moves a `confirmed` order with a saved pin to `dispatched` and sets `dispatchedAt`. Also clears `riderDeclinedAt` / `declinedRiderName` (the vendor kept the rider who declined and sent them the link again). The rider then accepts or declines (`acceptedAt`). No body.
 
 - `200` → the order, as in `GET /orders/:id`. Sending again while already `dispatched` also returns `200`, unchanged.
 - `404` → `{ "error": "Order not found" }`
@@ -347,12 +355,12 @@ The vendor sent the rider their link. Moves a `confirmed` order with a saved pin
 
 ## `PATCH /orders/:id/rider`
 
-Change the order's rider. **Body:** `{ "riderId": "..." }`, one of the vendor's active riders. Allowed while the order is `pending_confirmation`, `confirmed`, or `dispatched` with no `pickedUpAt` yet. A different rider always gets a new `riderToken`, so the previous rider's link (sent or just copied) stops working: `GET /rider/<old token>` is a `404`. The customer's link doesn't change. A `dispatched` order goes back to `confirmed` (`dispatchedAt: null`), since the new rider hasn't been sent their link yet; sending it dispatches again. Sending the current rider is a no-op `200`.
+Change the order's rider. **Body:** `{ "riderId": "..." }`, one of the vendor's active riders. Allowed while the order is `pending_confirmation` or `confirmed` (including after a rider declined), not once the link is sent (`dispatched`): then the rider declines from their link (`POST /rider/:riderToken/decline`) to hand the order back. A different rider always gets a new `riderToken`, so a link already copied for the previous rider stops working: `GET /rider/<old token>` is a `404`. The customer's link doesn't change. A new rider also clears `acceptedAt`, `riderDeclinedAt` and `declinedRiderName`. Sending the current rider is a no-op `200`.
 
 - `200` → the order, as in `GET /orders/:id`.
 - `400` → `{ "error": "riderId is required" | "riderId does not match any rider", "fields": ["riderId"] }`
 - `404` → `{ "error": "Order not found" }`
-- `409` → `{ "error": "...", "status": "<current status>" }`: `dispatched` and already picked up, or `not_ready` / `delivered` / `failed`.
+- `409` → `{ "error": "...", "status": "<current status>" }`: `dispatched`, `not_ready`, `delivered` or `failed`.
 
 ---
 
@@ -422,7 +430,7 @@ Public, with no auth. The customer's pin and landmark note (MVP feature 3), plus
 
 Public, with no auth. Everything the rider needs in one place (MVP feature 4). Only exists once the customer's pin is saved.
 
-Opening the link counts as sending it: if the order is still `confirmed`, this moves it to `dispatched` and sets `dispatchedAt`, however the vendor got the link to the rider (copied, forwarded, WhatsApp, SMS). The exception is the vendor's own preview: a request carrying that vendor's session cookie changes nothing and gets `"vendorPreview": true` (otherwise `false`).
+`acceptedAt` is `null` until the rider taps "Accept Delivery"; until then the page shows the job with "Accept Delivery" / "Decline Delivery" (it does that for a still-`confirmed` order too, since the vendor may have pasted the link without the send buttons). Opening the link changes nothing.
 
 `location` is `null` until the rider has confirmed pickup (`pickedUpAt`) — withheld by the API, not just hidden on the page. Everything else (who, what, the pickup point) is available straight away.
 
@@ -448,9 +456,27 @@ Opening the link counts as sending it: if the order is still `confirmed`, this m
   After pickup, `location` is filled in and `pickedUpAt` is set.
 - `404` → `{ "error": "Delivery not found" }`
 
+## `POST /rider/:riderToken/accept`
+
+Public, with no auth. The rider takes the job: sets `acceptedAt`. If the order is still `confirmed` (the vendor pasted the link rather than using the send buttons), it also moves to `dispatched` with `dispatchedAt`. No body. Tapping again is harmless.
+
+- `200` → `{ "acceptedAt": "2026-10-08T14:05:00.000Z", "status": "dispatched" }`
+- `404` → `{ "error": "Delivery not found" }`, including a link that was replaced (the rider declined, or the vendor changed the rider).
+- `409` → `{ "error": "...", "status": "<current status>" }`: `delivered` / `failed` → `"This delivery is already finished."`
+
+## `POST /rider/:riderToken/decline`
+
+Public, with no auth. "Decline Delivery". Only before pickup; after that it's a failed delivery with a reason. No body, no reason asked. The order goes back to `confirmed`: `dispatchedAt` and `acceptedAt` are cleared, the rider link is replaced (this one is a `404` from now on), and `riderDeclinedAt` / `declinedRiderName` are set for the vendor's page and dashboard. The customer's link, pin and note don't change.
+
+- `200` → `{ "declined": true }`
+- `404` → `{ "error": "Delivery not found" }`
+- `409` → `{ "error": "...", "status": "<current status>" }`:
+  - picked up → `"You've already picked up this order. If you can't deliver it, mark it as failed instead."`
+  - `delivered` / `failed` → `"This delivery is already finished."`
+
 ## `POST /rider/:riderToken/pickup`
 
-Public, with no auth. The rider confirms they've collected the order from the vendor. Unlocks `location` on `GET /rider/:riderToken`. No body. Tapping again is harmless.
+Public, with no auth. The rider confirms they've collected the order from the vendor. Unlocks `location` on `GET /rider/:riderToken`. Also sets `acceptedAt` if the rider hadn't accepted. No body. Tapping again is harmless.
 
 - `200` → `{ "pickedUpAt": "2026-09-29T13:15:00.000Z", "location": { "lat": 6.6018, "lng": 3.3515, "landmarkNote": "...", "address": "..." } }`
 - `404` → `{ "error": "Delivery not found" }`
@@ -520,7 +546,7 @@ The vendor marks a `dispatched` order delivered when the customer can't confirm 
 
 ## `POST /orders/:id/retrigger`
 
-Vendor only. For an order the customer declined (`not_ready`): issues a **new** `customerToken` (the old link stays closed) and puts the order back to `pending_confirmation`, clearing `notReadyAt`. The vendor then sends the new link. The vendor is deciding the delivery is going out today.
+Vendor only. For an order the customer declined (`not_ready`): issues a **new** `customerToken` (the old link stays closed) and puts the order back to `pending_confirmation`, clearing `notReadyAt`. The decline is kept in `attempts` (`outcome: "declined"`, `failedAt` = when they said "Not now"); `attempt` doesn't go up, since no rider went out. The vendor then sends the new link. The vendor is deciding the delivery is going out today.
 
 **Body (optional):** `{ "riderId": "<id>" }` to change the rider; omit to keep the same one. Must be one of the vendor's active riders.
 
@@ -539,7 +565,7 @@ Vendor only. For an order the rider marked `failed`. Saves that attempt into the
 - `400`, `404` as above
 - `409` → `{ "error": "Only an order the rider marked as failed can be redelivered.", "status": "<current status>" }`
 
-`GET /orders/:id` now also returns `retriggeredAt` (when the vendor retriggered a declined order, else `null`; the page uses it to word the follow-up message) and `attempt` (1 for the first try) and `attempts`: earlier failed attempts, oldest first, each `{ attemptNumber, riderName, failureReason, dispatchedAt, pickedUpAt, arrivedAt, failedAt, location: { lat, lng, landmarkNote, address } | null }`.
+`GET /orders/:id` now also returns `retriggeredAt` (when the vendor retriggered a declined order, else `null`; the page uses it to word the follow-up message) and `attempt` (1 for the first try) and `attempts`: earlier rounds, oldest first, each `{ outcome, attemptNumber, riderName, failureReason, failureNote, dispatchedAt, pickedUpAt, arrivedAt, failedAt, location: { lat, lng, landmarkNote, address } | null }`. `outcome` is `"failed"` (the rider couldn't deliver; saved on redeliver) or `"declined"` (the customer said "Not now"; saved on retrigger, with no reason, rider times or pin). A decline shares `attemptNumber` with the attempt that follows it. The customer page's redelivery wording only looks at failed rounds.
 
 ## `POST /rider/:riderToken/undo-arrived` and `POST /rider/:riderToken/undo-pickup`
 
